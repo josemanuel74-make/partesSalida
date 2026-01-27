@@ -1,0 +1,21 @@
+# Sensitive Data
+.env
+data/
+pdfs/
+utils/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+
+# OS Specific
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes

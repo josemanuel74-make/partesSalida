@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Control de Salidas - Alumnos</title>
+    <link rel="stylesheet" href="style.css?v=2">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+</head>
+
+<body>
+    <div class="background-mesh"></div>
+
+    <main class="app-container">
+        <header class="app-header">
+            <div class="logo-area">
+                <img src="data/logo.gif?v=3" alt="Logo" style="height: 60px; margin-right: 1rem;">
+                <h1>Control de Salidas</h1>
+            </div>
+            <p class="subtitle">Gestión de Alumnos y Salidas</p>
+        </header>
+
+        <section class="search-section">
+            <div class="search-container">
+                <div class="search-box">
+                    <i class="ph ph-magnifying-glass search-icon"></i>
+                    <input type="text" id="searchInput" placeholder="Buscar por DNI, Nombre o Grupo..."
+                        autocomplete="off">
+                </div>
+                <div class="filters">
+                    <button class="filter-chip active" data-filter="all">Todos</button>
+                    <!-- More filters can be added -->
+
+                    <button id="uploadBtn" class="filter-chip special-chip"
+                        style="background-color: var(--primary); color: white;">
+                        <i class="ph-bold ph-upload-simple"></i> Actualizar Alumnos
+                    </button>
+                    <input type="file" id="studentExcelInput" accept=".xlsx, .xls" style="display: none;">
+
+                    <button id="historyBtn" class="filter-chip special-chip"><i
+                            class="ph-bold ph-clock-counter-clockwise"></i> Ver Historial</button>
+                </div>
+            </div>
+        </section>
+
+        <section class="results-section">
+            <div id="loading" class="state-message">
+                <div class="spinner"></div>
+                <p>Cargando datos...</p>
+            </div>
+            <div id="noResults" class="state-message hidden">
+                <i class="ph ph-warning-circle"></i>
+                <p>No se encontraron alumnos</p>
+            </div>
+            <div id="studentGrid" class="student-grid">
+                <!-- Students will be inserted here -->
+            </div>
+            <div id="statsBar" class="stats-bar hidden">
+                Mostrando <span id="count">0</span> resultados
+            </div>
+        </section>
+    </main>
+
+    <!-- Modal for Exit Registration -->
+    <div id="exitModal" class="modal-overlay hidden">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>Registrar Salida</h3>
+                <button id="closeModal" class="btn-icon"><i class="ph ph-x"></i></button>
+            </div>
+            <div class="modal-body">
+                <div class="modal-student-info"
+                    style="display: flex; align-items: center; gap: 1.5rem; margin-bottom: 1.5rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border);">
+                    <div class="student-photo-container" style="width: 80px; height: 80px;">
+                        <img id="studentPhotoModal" src="" alt=""
+                            style="width: 100%; height: 100%; object-fit: cover; border-radius: 10px;">
+                    </div>
+                    <div>
+                        <p class="student-target" style="margin-bottom: 0; border-bottom: none; padding-bottom: 0;">
+                            Alumno: <strong id="studentNameModal">...</strong></p>
+                        <p id="studentGroupModal" style="color: var(--text-muted); font-size: 0.9rem;"></p>
+                    </div>
+                </div>
+
+                <form id="exitForm">
+                    <div class="form-group">
+                        <label for="motive">Motivo de la salida</label>
+                        <select id="motive" class="form-select">
+                            <option value="Personal">Asuntos Personales</option>
+                            <option value="Médico">Cita Médica</option>
+                            <option value="Enfermedad">Enfermedad</option>
+                            <option value="Oficial">Trámites Oficiales</option>
+                            <option value="Autorización de los tutores">Autorización de los tutores</option>
+                            <option value="Otro">Otro</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Acompañado por</label>
+                        <div class="radio-group">
+                            <label class="radio-card">
+                                <input type="radio" name="accompaniedBy" value="Solo" checked>
+                                <span>Solo/a</span>
+                            </label>
+                            <label class="radio-card" id="cardTutor1">
+                                <input type="radio" name="accompaniedBy" value="Tutor1">
+                                <span id="labelTutor1">Tutor 1</span>
+                            </label>
+                            <label class="radio-card" id="cardTutor2">
+                                <input type="radio" name="accompaniedBy" value="Tutor2">
+                                <span id="labelTutor2">Tutor 2</span>
+                            </label>
+                            <label class="radio-card">
+                                <input type="radio" name="accompaniedBy" value="Otro">
+                                <span>Otro</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="form-group"
+                        style="background: rgba(255,255,255,0.05); padding: 1rem; border-radius: 8px;">
+                        <label class="checkbox-label"
+                            style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; color: white; font-size: 1rem;">
+                            <input type="checkbox" id="checkVuelve" style="width: 1.2rem; height: 1.2rem;">
+                            ¿Va a volver al centro?
+                        </label>
+
+                        <div id="hoursContainer" class="hidden"
+                            style="margin-top: 1rem; padding-top: 0.5rem; border-top: 1px solid rgba(255,255,255,0.1);">
+                            <label>Horas que estará fuera:</label>
+                            <div class="periods-grid">
+                                <label class="checkbox-inline"><input type="checkbox" name="period" value="1ª">
+                                    1ª</label>
+                                <label class="checkbox-inline"><input type="checkbox" name="period" value="2ª">
+                                    2ª</label>
+                                <label class="checkbox-inline"><input type="checkbox" name="period" value="3ª">
+                                    3ª</label>
+                                <label class="checkbox-inline"><input type="checkbox" name="period" value="4ª">
+                                    4ª</label>
+                                <label class="checkbox-inline"><input type="checkbox" name="period" value="5ª">
+                                    5ª</label>
+                                <label class="checkbox-inline"><input type="checkbox" name="period" value="6ª">
+                                    6ª</label>
+                            </div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button id="cancelBtn" class="btn-secondary">Cancelar</button>
+                <div class="action-buttons">
+                    <button id="printBtn" class="btn-secondary hidden"><i class="ph ph-printer"></i> Imprimir</button>
+                    <button id="saveBtn" class="btn-primary">Grabar Salida</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- History Modal -->
+    <div id="historyModal" class="modal-overlay hidden">
+        <div class="modal modal-large">
+            <div class="modal-header">
+                <h3>Historial de Salidas</h3>
+                <button id="closeHistoryBtn" class="btn-icon"><i class="ph ph-x"></i></button>
+            </div>
+            <div class="history-toolbar"
+                style="padding: 0 1.5rem 0.5rem 1.5rem; display: flex; gap: 1rem; align-items: center;">
+                <div class="search-box" style="flex: 2;">
+                    <i class="ph ph-magnifying-glass search-icon"></i>
+                    <input type="text" id="historySearchInput" placeholder="Buscar por Nombre, DNI, Grupo..."
+                        autocomplete="off">
+                </div>
+                <div class="filter-group" style="display: flex; gap: 0.5rem; flex: 1.5;">
+                    <select id="historyMotiveFilter" class="form-select"
+                        style="padding: 0.4rem 0.8rem; font-size: 0.85rem;">
+                        <option value="all">Todos los motivos</option>
+                        <option value="Personal">Personal</option>
+                        <option value="Médico">Médico</option>
+                        <option value="Enfermedad">Enfermedad</option>
+                        <option value="Oficial">Oficial</option>
+                        <option value="Autorización">Autorización</option>
+                        <option value="Otro">Otro</option>
+                    </select>
+                </div>
+                <button id="exportBtn" class="btn-secondary" style="white-space: nowrap;">
+                    <i class="ph-bold ph-download-simple"></i> Exportar
+                </button>
+            </div>
+            <div class="history-filters-row"
+                style="padding: 0 1.5rem 1rem 1.5rem; display: flex; gap: 1rem; align-items: center;">
+                <div class="date-range"
+                    style="display: flex; align-items: center; gap: 0.5rem; color: var(--text-muted); font-size: 0.85rem;">
+                    <span>Desde:</span>
+                    <input type="date" id="historyDateFrom" class="form-select" style="padding: 0.2rem 0.6rem;">
+                    <span>Hasta:</span>
+                    <input type="date" id="historyDateTo" class="form-select" style="padding: 0.2rem 0.6rem;">
+                </div>
+                <button id="clearHistoryFilters" class="btn-icon-small" title="Limpiar filtros">
+                    <i class="ph ph-arrow-counter-clockwise"></i>
+                </button>
+            </div>
+            <div id="historyStatsSummary" class="history-stats-bar"
+                style="padding: 0 1.5rem 1rem 1.5rem; display: flex; gap: 0.8rem; overflow-x: auto;">
+                <div class="hist-stat-card">
+                    <span class="hist-stat-label">Hoy</span>
+                    <span id="histStatToday" class="hist-stat-value">0</span>
+                </div>
+                <div class="hist-stat-card">
+                    <span class="hist-stat-label">Esta Semana</span>
+                    <span id="histStatWeek" class="hist-stat-value">0</span>
+                </div>
+                <div class="hist-stat-card">
+                    <span class="hist-stat-label">Este Mes</span>
+                    <span id="histStatMonth" class="hist-stat-value">0</span>
+                </div>
+                <div class="hist-stat-card">
+                    <span class="hist-stat-label">Total</span>
+                    <span id="histStatTotal" class="hist-stat-value">0</span>
+                </div>
+            </div>
+            <div id="trendsSection" class="trends-container hidden"
+                style="padding: 0 1.5rem 1rem 1.5rem; border-bottom: 1px solid var(--border); margin-bottom: 1rem;">
+                <h4
+                    style="color: var(--text-muted); font-size: 0.8rem; text-transform: uppercase; margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem;">
+                    <i class="ph ph-chart-line-up"></i> Tendencias y Patrones
+                </h4>
+                <div class="charts-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;">
+                    <div class="chart-box">
+                        <p style="font-size: 0.75rem; margin-bottom: 0.5rem; color: var(--text-muted);">Salidas por Día
+                            de la Semana</p>
+                        <div id="daysChart" class="svg-chart-container"></div>
+                    </div>
+                    <div class="chart-box">
+                        <p style="font-size: 0.75rem; margin-bottom: 0.5rem; color: var(--text-muted);">Salidas por Hora
+                            (Sesión)</p>
+                        <div id="hoursChart" class="svg-chart-container"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-body history-body">
+                <table class="history-table">
+                    <thead>
+                        <tr>
+                            <th>Fecha</th>
+                            <th>Hora</th>
+                            <th>Alumno</th>
+                            <th>Grupo</th>
+                            <th>Motivo</th>
+                            <th>Acompañante</th>
+                            <th>Vuelve</th>
+                            <th>PDF</th>
+                            <th>Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody id="historyTableBody">
+                        <!-- Rows inserted by JS -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+
+    <!-- TICKET TEMPLATE (Thermal Printer) -->
+    <div id="printableTicket" class="ticket-hidden">
+        <div class="ticket-header">
+            <img src="data/logo.gif?v=3" alt="Logo" class="ticket-logo" style="max-height: 50px;">
+            <!-- Note: User can replace this with real logo later -->
+            <h3>PARTE DE SALIDA</h3>
+            <p>I.E.S. Leopoldo Queipo</p>
+        </div>
+        <div class="ticket-body">
+            <div class="ticket-row">
+                <strong>Fecha:</strong> <span id="ticketDate"></span>
+            </div>
+            <div class="ticket-row">
+                <strong>Hora:</strong> <span id="ticketTime"></span>
+            </div>
+            <hr class="ticket-divider">
+            <div class="ticket-row">
+                <strong>Alumno:</strong> <br>
+                <span id="ticketStudent"></span>
+            </div>
+            <div class="ticket-row">
+                <strong>Grupo:</strong> <span id="ticketGroup"></span>
+            </div>
+            <div class="ticket-row">
+                <strong>DNI:</strong> <span id="ticketDNI"></span>
+            </div>
+            <hr class="ticket-divider">
+            <div class="ticket-row">
+                <strong>Motivo:</strong> <br>
+                <span id="ticketMotive"></span>
+            </div>
+            <div class="ticket-row">
+                <strong>Acompañado por:</strong> <br>
+                <span id="ticketAccompanied"></span>
+            </div>
+            <br><br>
+            <br><br>
+            <!-- Signature removed as requested -->
+            <div class="ticket-signature" style="display:none;">
+                <p>Firma del responsable:</p>
+                <br><br>
+                _______________________
+            </div>
+        </div>
+        <div class="ticket-footer">
+            <p>Documento oficial de control</p>
+        </div>
+    </div>
+
+    <script src="script.js?v=5"></script>
+</body>
+
+</html>
