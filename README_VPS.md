@@ -61,15 +61,17 @@ Para "esconder" los datos de los alumnos y las fotos, muévelos fuera de la carp
     ```bash
     mkdir -p /home/tu_usuario/secure_data
     ```
-2.  Mueve la carpeta `data` y `pdfs` allí:
+2.  Mueve la carpeta `data`, `pdfs` y el archivo de horarios allí:
     ```bash
     mv /var/www/student-finder/data /home/tu_usuario/secure_data/
     mv /var/www/student-finder/pdfs /home/tu_usuario/secure_data/
+    mv /var/www/student-finder/horarios_profesores_limpio.json /home/tu_usuario/secure_data/
     ```
 3.  Añade estas líneas a tu archivo `.env`:
     ```ini
     DATA_PATH=/home/tu_usuario/secure_data/data
     PDF_PATH=/home/tu_usuario/secure_data/pdfs
+    TIMETABLE_PATH=/home/tu_usuario/secure_data/horarios_profesores_limpio.json
     ```
 
 ## 5. Ejecutar la Aplicación como Servicio

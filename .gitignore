@@ -3,6 +3,8 @@
 data/
 pdfs/
 utils/
+*.xls
+*.xlsx
 
 # Python
 __pycache__/

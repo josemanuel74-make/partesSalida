@@ -16,10 +16,8 @@ PORT = 8081
 # Use the directory where the script is located as the base
 # Use the directory where the script is located as the base
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-# Prioritize local file for Docker/Self-contained, fallback to parent
-TIMETABLE_FILE = os.path.join(BASE_DIR, "horarios_profesores_limpio.json")
-if not os.path.exists(TIMETABLE_FILE):
-    TIMETABLE_FILE = os.path.join(os.path.dirname(BASE_DIR), "horarios_profesores_limpio.json")
+# Timetable path will be set after DATA_DIR is defined
+TIMETABLE_FILE = None
 
 def load_env():
     """Simple .env loader to avoid extra dependencies."""
@@ -70,6 +68,15 @@ if not os.path.exists(PDF_DIR):
 # Update file references based on new directories
 CSV_FILE = os.path.join(DATA_DIR, "salidas.csv")
 LOG_FILE = os.path.join(DATA_DIR, "server_error.log")
+
+# Timetable file can also be moved to DATA_DIR
+TIMETABLE_FILE = os.environ.get('TIMETABLE_PATH')
+if not TIMETABLE_FILE:
+    # Try in DATA_DIR first, then BASE_DIR
+    if os.path.exists(os.path.join(DATA_DIR, "horarios_profesores_limpio.json")):
+        TIMETABLE_FILE = os.path.join(DATA_DIR, "horarios_profesores_limpio.json")
+    else:
+        TIMETABLE_FILE = os.path.join(BASE_DIR, "horarios_profesores_limpio.json")
 
 # CSV Headers
 CSV_HEADERS = ["Fecha", "Hora", "ID Alumno", "Nombre", "Grupo", 
