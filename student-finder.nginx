@@ -1,12 +1,77 @@
+# Definición de Rate Limiting
+# Estas zonas deben estar en el bloque http {} de /etc/nginx/nginx.conf si dan error aquí
+limit_req_zone $binary_remote_addr zone=login_limit:10m rate=1r/s;
+limit_req_zone $binary_remote_addr zone=api_limit:10m rate=5r/s;
+
+# Redirección de HTTP a HTTPS
 server {
     listen 80;
-    server_name tudominio.com; # <--- CAMBIA ESTO POR TU DOMINIO
+    server_name tudominio.com; # <--- CAMBIA POR TU DOMINIO REAL
+    return 301 https://$host$request_uri;
+}
+
+# Bloque HTTPS Principal
+server {
+    listen 443 ssl http2;
+    server_name tudominio.com; # <--- CAMBIA POR TU DOMINIO REAL
+
+    # SSL Config (Añadida automáticamente por Certbot)
+    # ssl_certificate /etc/letsencrypt/live/tudominio.com/fullchain.pem;
+    # ssl_certificate_key /etc/letsencrypt/live/tudominio.com/privkey.pem;
+
+    # Seguridad de Cabeceras
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://unpkg.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self';" always;
+    
+    # HSTS (Activar solo cuando HTTPS funcione correctamente)
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+
+    # Ocultar versión de Nginx y otros detalles
+    server_tokens off;
+
+    # Tamaño máximo de subida razonable (5MB coincide con App)
+    client_max_body_size 5M;
 
     location / {
-        proxy_pass http://localhost:8081; # Apunta a tu servidor Python
+        proxy_pass http://127.0.0.1:8081;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        
+        # Ocultar cabeceras del servidor backend
+        proxy_hide_header X-Powered-By;
+        proxy_hide_header Server;
+    }
+
+    # Protección extra para el login (Rate Limit estricto)
+    location /api/login {
+        limit_req zone=login_limit burst=5 nodelay;
+        proxy_pass http://127.0.0.1:8081;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Protección para el resto de la API
+    location /api/ {
+        limit_req zone=api_limit burst=10;
+        proxy_pass http://127.0.0.1:8081;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Bloquear acceso a archivos ocultos y sensibles (.git, .env, .db)
+    location ~ /\.(?!well-known) {
+        deny all;
+    }
+    
+    location ~ \.(db|sqlite|log|ini)$ {
+        deny all;
     }
 }

@@ -29,12 +29,26 @@ document.addEventListener('DOMContentLoaded', () => {
     let allStudents = [];
     let currentFilter = 'all';
     let selectedStudent = null;
+    let csrfToken = null;
+
+    // Fetch CSRF Token
+    async function refreshCsrfToken() {
+        try {
+            const res = await fetch('/api/csrf-token');
+            const data = await res.json();
+            window.csrfToken = data.csrf_token;
+            csrfToken = data.csrf_token;
+        } catch (e) {
+            console.error("Failed to fetch CSRF token");
+        }
+    }
 
     // Constants
     const DATA_URL = 'data/students.json';
     const API_URL = '/api/exit'; // Relative path to support any port
 
     // Initialize
+    refreshCsrfToken();
     fetchData();
 
     // Check for correct protocol
@@ -372,9 +386,13 @@ document.addEventListener('DOMContentLoaded', () => {
             saveBtn.textContent = 'Guardando...';
             saveBtn.disabled = true;
 
+            if (!csrfToken) await refreshCsrfToken();
             const res = await fetch(API_URL, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrfToken
+                },
                 body: JSON.stringify(payload)
             });
 
@@ -481,29 +499,33 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function uploadFile(file) {
         if (!confirm(`¿Estás seguro de que quieres actualizar la base de datos con el archivo "${file.name}"? Esto sobrescribirá los datos actuales.`)) {
-            studentExcelInput.value = ''; // Reset
+            studentExcelInput.value = '';
             return;
         }
 
         const formData = new FormData();
-        formData.append('file', file); // key 'file' matches nothing specific in python, raw read used but good practice
+        formData.append('file', file);
 
         uploadBtn.disabled = true;
         uploadBtn.innerHTML = '<i class="ph-bold ph-spinner ph-spin"></i> Subiendo...';
 
         try {
+            if (!csrfToken) await refreshCsrfToken();
             const res = await fetch('/api/upload-students', {
                 method: 'POST',
-                body: file // Send raw binary or FormData, python expects raw read in this simple implementation
+                headers: {
+                    'X-CSRFToken': csrfToken
+                },
+                body: formData
             });
 
             if (res.ok) {
                 const data = await res.json();
                 showToast(`Se han actualizado ${data.count} alumnos correctamente.`, 'success');
-                fetchData(); // Reload grid
+                fetchData();
             } else {
-                const err = await res.text();
-                showToast('Error al procesar el archivo: ' + err, 'error');
+                const data = await res.json();
+                showToast('Error: ' + (data.error || 'No se pudo procesar el archivo'), 'error');
             }
         } catch (error) {
             console.error(error);
@@ -556,10 +578,21 @@ document.addEventListener('DOMContentLoaded', () => {
                 <td>
                     ${pdfFile ? `<a href="/pdfs/${pdfFile}" target="_blank" class="pdf-link"><i class="ph-bold ph-file-pdf"></i> PDF</a>` : '-'}
                 </td>
-                <td>
-                    ${pdfFile ? `<button onclick="deleteRecord('${pdfFile}')" class="btn-icon-small delete-btn"><i class="ph-bold ph-trash"></i></button>` : '-'}
+                <td class="row-actions">
                 </td>
             `;
+
+            if (pdfFile) {
+                const btn = document.createElement('button');
+                btn.className = 'btn-icon-small delete-btn';
+                btn.innerHTML = '<i class="ph ph-trash"></i>';
+                btn.title = 'Eliminar registro';
+                btn.onclick = () => window.deleteRecord(pdfFile);
+                tr.querySelector('.row-actions').appendChild(btn);
+            } else {
+                tr.querySelector('.row-actions').textContent = '-';
+            }
+
             historyTableBody.appendChild(tr);
         });
     }
@@ -696,13 +729,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
     window.deleteRecord = async function (pdfFilename) {
         if (!confirm('¿Estás seguro de eliminar este registro?')) return;
+        if (!csrfToken) await refreshCsrfToken();
         try {
-            const res = await fetch(`/api/history/${pdfFilename}`, { method: 'DELETE' });
+            const res = await fetch(`/api/history/${pdfFilename}`, {
+                method: 'DELETE',
+                headers: {
+                    'X-CSRFToken': csrfToken
+                }
+            });
             if (res.ok) {
                 openHistory();
                 showToast('Registro eliminado.', 'success');
             } else {
-                showToast('No se pudo eliminar.', 'error');
+                const errorData = await res.json().catch(() => ({}));
+                const errorMsg = errorData.error || `Error ${res.status}`;
+                showToast(`No se pudo eliminar: ${errorMsg}`, 'error');
             }
         } catch (e) {
             console.error(e);

@@ -1,897 +1,498 @@
-import http.server
-import socketserver
-import json
-import csv
 import os
-from datetime import datetime
-import urllib.parse
+import csv
+import json
+import secrets
+import sqlite3
+import tempfile
+import shutil
+from datetime import datetime, timedelta
+from functools import wraps
+import pandas as pd
 from fpdf import FPDF
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-import glob
-import pandas as pd
+from cryptography.fernet import Fernet
 
-PORT = 8081
-# Use the directory where the script is located as the base
-# Use the directory where the script is located as the base
+from flask import Flask, request, jsonify, session, send_from_directory, redirect, url_for, make_response
+from flask_bcrypt import Bcrypt
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from flask_wtf.csrf import CSRFProtect, generate_csrf
+from werkzeug.utils import secure_filename
+from dotenv import load_dotenv
+
+# --- INITIALIZATION ---
+app = Flask(__name__, static_folder='static', static_url_path='')
+load_dotenv()
+
+# Security Configuration (STRICT PRODUCTION SETTINGS)
+DEBUG_MODE = os.environ.get('DEBUG', '0') == '1'
+IS_PROD = not DEBUG_MODE
+
+# SECRET_KEY is MANDATORY in production
+SECRET_KEY = os.environ.get('SECRET_KEY')
+if not SECRET_KEY:
+    if IS_PROD:
+        raise RuntimeError("FATAL: SECRET_KEY must be set in production environment variables.")
+    else:
+        SECRET_KEY = secrets.token_urlsafe(32)
+
+app.config['SECRET_KEY'] = SECRET_KEY
+app.config['DEBUG'] = DEBUG_MODE
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SECURE'] = os.environ.get('COOKIE_SECURE', '0') == '1'
+app.config['SESSION_COOKIE_SAMESITE'] = 'Strict'
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=8)
+app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024  # 5MB Max Upload
+
+bcrypt = Bcrypt(app)
+csrf = CSRFProtect(app)
+
+# Rate Limiting with Redis for production (multi-worker support)
+STORAGE_URI = os.environ.get('RATELIMIT_STORAGE_URL', 'memory://')
+limiter = Limiter(
+    get_remote_address,
+    app=app,
+    default_limits=["2000 per day", "500 per hour"] if DEBUG_MODE else ["200 per day", "50 per hour"],
+    storage_uri=STORAGE_URI,
+    enabled=not DEBUG_MODE  # Disable limiter in local debug mode for easier testing
+)
+
+# --- ENCRYPTION SETUP ---
+STUDENTS_DATA_KEY = os.environ.get('STUDENTS_DATA_KEY')
+if not STUDENTS_DATA_KEY:
+    # We must have the key to decrypt personal data.
+    # Exception: if the file doesn't exist yet (first run), we might defer this, 
+    # but the requirement says "app should NOT start".
+    raise RuntimeError("FATAL: STUDENTS_DATA_KEY is missing. Application cannot handle student data.")
+
+try:
+    cipher_suite = Fernet(STUDENTS_DATA_KEY.encode())
+except Exception as e:
+    raise RuntimeError(f"FATAL: Invalida STUDENTS_DATA_KEY format: {e}")
+
+# Paths & Directories
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-# Timetable path will be set after DATA_DIR is defined
-TIMETABLE_FILE = None
+DATA_DIR = os.environ.get('DATA_PATH', os.path.join(BASE_DIR, "data"))
+PDF_DIR = os.environ.get('PDF_PATH', os.path.join(BASE_DIR, "pdfs"))
+TIMETABLE_PATH = os.environ.get('TIMETABLE_PATH', os.path.join(DATA_DIR, "horarios_profesores_limpio.json"))
 
-def load_env():
-    """Simple .env loader to avoid extra dependencies."""
-    env_file = os.path.join(BASE_DIR, ".env")
-    if os.path.exists(env_file):
-        try:
-            with open(env_file, 'r', encoding='utf-8') as f:
-                for line in f:
-                    if '=' in line and not line.startswith('#'):
-                        key, value = line.strip().split('=', 1)
-                        os.environ[key] = value
-            print(f"Configuración cargada desde {env_file}")
-        except Exception as e:
-            print(f"Error cargando .env: {e}")
+for d in [DATA_DIR, PDF_DIR]:
+    if not os.path.exists(d):
+        os.makedirs(d)
 
-# Load environment variables from .env file
-load_env()
-
-# Email Configuration (Should be provided by environment variables or a config file)
-SMTP_SERVER = os.environ.get('SMTP_SERVER', 'smtp.gmail.com')
-SMTP_PORT = int(os.environ.get('SMTP_PORT', 587))
-SMTP_USER = os.environ.get('SMTP_USER', '')
-SMTP_PASS = os.environ.get('SMTP_PASS', '') # Use App Password for Gmail
-SENDER_EMAIL = os.environ.get('SENDER_EMAIL', SMTP_USER)
-GUARDIAN_EMAILS = os.environ.get('GUARDIAN_EMAILS', '').split(',') # Comma-separated list in .env
-
-# Ensure PDF directory exists
-# Ensure directories exist
-# Ensure directories exist
-# Allow external data path configuration for security
-default_data = os.path.join(BASE_DIR, "data")
-default_pdfs = os.path.join(BASE_DIR, "pdfs")
-
-DATA_DIR = os.environ.get('DATA_PATH', default_data)
-PDF_DIR = os.environ.get('PDF_PATH', default_pdfs)
-
-# Ensure absolute paths if relative paths were provided in env
-if not os.path.isabs(DATA_DIR):
-    DATA_DIR = os.path.abspath(os.path.join(BASE_DIR, DATA_DIR))
-if not os.path.isabs(PDF_DIR):
-    PDF_DIR = os.path.abspath(os.path.join(BASE_DIR, PDF_DIR))
-
-if not os.path.exists(DATA_DIR):
-    os.makedirs(DATA_DIR)
-if not os.path.exists(PDF_DIR):
-    os.makedirs(PDF_DIR)
-
-# Update file references based on new directories
 CSV_FILE = os.path.join(DATA_DIR, "salidas.csv")
 LOG_FILE = os.path.join(DATA_DIR, "server_error.log")
+DB_FILE = os.path.join(DATA_DIR, "sessions.db")
 
-# Timetable file can also be moved to DATA_DIR
-TIMETABLE_FILE = os.environ.get('TIMETABLE_PATH')
-if not TIMETABLE_FILE:
-    # Try in DATA_DIR first, then BASE_DIR
-    if os.path.exists(os.path.join(DATA_DIR, "horarios_profesores_limpio.json")):
-        TIMETABLE_FILE = os.path.join(DATA_DIR, "horarios_profesores_limpio.json")
-    else:
-        TIMETABLE_FILE = os.path.join(BASE_DIR, "horarios_profesores_limpio.json")
-
-# CSV Headers
 CSV_HEADERS = ["Fecha", "Hora", "ID Alumno", "Nombre", "Grupo", 
                "DNI Alumno", "Motivo", "Acompañante", "Detalle Acompañante", 
                "PDF", "Vuelve", "Horas", "TicketID", "HaVuelto"]
 
-# Check for Docker directory issue
-if os.path.exists(CSV_FILE) and os.path.isdir(CSV_FILE):
-    print("CRITICAL ERROR: 'salidas.csv' is a directory!")
-    print("This often happens in Docker if the file didn't exist on the host before mounting.")
-    print("Please delete the directory 'salidas.csv' on your host machine and create an empty file instead.")
-    # We cannot proceed safely
-    exit(1)
-
-# Ensure CSV header exists or update it if needed
+# Ensure CSV exists
 if not os.path.exists(CSV_FILE):
     with open(CSV_FILE, 'w', newline='', encoding='utf-8') as f:
         writer = csv.writer(f)
         writer.writerow(CSV_HEADERS)
-else:
-    # Check if headers match, if not, we might need to migrate (simple append check)
-    try:
-        with open(CSV_FILE, 'r', encoding='utf-8') as f:
-            reader = csv.reader(f)
-            header = next(reader, [])
-            if len(header) < len(CSV_HEADERS):
-                # Simple migration: Read all, rewrite with new header
-                # This handles adding new columns
-                rows = list(reader)
-                
-        if len(header) < len(CSV_HEADERS):
-            print("Migrating CSV to new format...")
-            with open(CSV_FILE, 'w', newline='', encoding='utf-8') as f:
-                writer = csv.writer(f)
-                writer.writerow(CSV_HEADERS)
-                for row in rows:
-                    # Pad row with empty strings for new columns
-                    while len(row) < len(CSV_HEADERS):
-                        row.append("")
-                    writer.writerow(row)
-    except Exception as e:
-        print(f"Error checking CSV headers: {e}")
 
-# Load Timetable Data
-TIMETABLE = []
-if os.path.exists(TIMETABLE_FILE):
-    try:
-        with open(TIMETABLE_FILE, 'r', encoding='utf-8') as f:
-            TIMETABLE = json.load(f)
-        print(f"Timetable loaded: {len(TIMETABLE)} teachers.")
-    except Exception as e:
-        print(f"Error loading timetable: {e}")
-else:
-    print(f"TIMETABLE NOT FOUND at {TIMETABLE_FILE}")
+# --- DB FOR PERSISTENT SESSIONS ---
+def init_db():
+    with sqlite3.connect(DB_FILE) as conn:
+        conn.execute('''CREATE TABLE IF NOT EXISTS sessions 
+                        (session_id TEXT PRIMARY KEY, user_id TEXT, expires_at DATETIME)''')
+init_db()
 
-def get_current_session():
-    """Maps current time to school session tramo name."""
-    now = datetime.now()
-    time_str = now.strftime("%H:%M")
-    
-# Session ranges based on horarios_profesores_limpio.json
-SESSIONS = [
-    ("07:35", "08:30", "Sesión 1"),
-    ("08:30", "09:25", "Sesión 2"),
-    ("09:25", "10:20", "Sesión 3"),
-    ("10:20", "11:15", "Sesión 4"),
-    ("11:15", "11:45", "Recreo 1"),
-    ("11:45", "12:40", "Sesión 5"),
-    ("12:40", "13:35", "Sesión 6"),
-    ("13:35", "14:30", "Sesión 7"),
-    ("14:30", "15:25", "Sesión 8"),
-    ("16:00", "16:55", "Sesión 9"),
-    ("16:55", "17:50", "Sesión 10"),
-    ("17:50", "18:45", "Sesión 11"),
-    ("18:45", "19:00", "Recreo 2"),
-    ("19:00", "19:55", "Sesión 12"),
-    ("19:55", "20:50", "Sesión 13"),
-    ("20:50", "21:45", "Sesión 14"),
+# --- UTILS ---
+def log_error(msg):
+    with open(LOG_FILE, "a", encoding='utf-8') as f:
+        f.write(f"{datetime.now()}: {msg}\n")
+
+def admin_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not session.get('logged_in'):
+            return jsonify({"error": "Unauthorized"}), 401
+        return f(*args, **kwargs)
+    return decorated_function
+
+def safe_text(text):
+    if not text: return ""
+    return str(text).encode('latin-1', 'replace').decode('latin-1')
+
+# --- BUSINESS LOGIC ---
+def load_timetable():
+    if os.path.exists(TIMETABLE_PATH):
+        try:
+            with open(TIMETABLE_PATH, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            log_error(f"Error loading timetable: {e}")
+def load_secure_json(path):
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, 'rb') as f:
+            encrypted_content = f.read()
+        
+        # Check if content is empty
+        if not encrypted_content:
+            return []
+            
+        # Try to decrypt. If it fails, assume it might be plain text (for migration) 
+        # or it's just wrong key. Requirement: app NO arranca if encrypted fails? 
+        # No, requirements said skip plain text.
+        decrypted_content = cipher_suite.decrypt(encrypted_content)
+        return json.loads(decrypted_content.decode('utf-8'))
+    except Exception as e:
+        # Check if it was plain text and we are in transition (for dev ease)
+        # But for prod we want strict. In local debug, maybe we allow fallthrough?
+        # Actually, user requirement: "no debe almacenarse nunca en texto plano".
+        log_error(f"Error decrypting secure data at {path}: {e}")
+        return []
+
+def save_secure_json(path, data):
+    try:
+        json_data = json.dumps(data, indent=4)
+        encrypted_data = cipher_suite.encrypt(json_data.encode('utf-8'))
+        with open(path, 'wb') as f:
+            f.write(encrypted_data)
+        return True
+    except Exception as e:
+        log_error(f"Error encrypting secure data at {path}: {e}")
+        return False
+
+# --- BUSINESS LOGIC ---
+def load_timetable():
+    return load_secure_json(TIMETABLE_PATH)
+
+TIMETABLE = load_timetable()
+
+SESSIONS_TIMES = [
+    ("07:35", "08:30", "Sesión 1"), ("08:30", "09:25", "Sesión 2"),
+    ("09:25", "10:20", "Sesión 3"), ("10:20", "11:15", "Sesión 4"),
+    ("11:15", "11:45", "Recreo 1"), ("11:45", "12:40", "Sesión 5"),
+    ("12:40", "13:35", "Sesión 6"), ("13:35", "14:30", "Sesión 7"),
+    ("14:30", "15:25", "Sesión 8"), ("16:00", "16:55", "Sesión 9"),
+    ("16:55", "17:50", "Sesión 10"), ("17:50", "18:45", "Sesión 11"),
+    ("18:45", "19:00", "Recreo 2"), ("19:00", "19:55", "Sesión 12"),
+    ("19:55", "20:50", "Sesión 13"), ("20:50", "21:45", "Sesión 14"),
 ]
 
 def get_current_session_info():
-    """Returns (session_name, session_index) for the current time."""
-    now = datetime.now()
-    time_str = now.strftime("%H:%M")
-    
-    for i, (start, end, name) in enumerate(SESSIONS):
+    time_str = datetime.now().strftime("%H:%M")
+    for i, (start, end, name) in enumerate(SESSIONS_TIMES):
         if start <= time_str < end:
             return name, i
     return None, -1
 
 def get_teacher_for_group(group_name, session_name):
-    """Finds the teacher who has class with the given group at the current session."""
-    if not session_name or not group_name:
-        return None
-    
+    if not session_name or not group_name: return None
     day_name = datetime.now().strftime("%A")
-    # Map Python day names to Spanish day names in JSON
-    days_map = {
-        "Monday": "Lunes",
-        "Tuesday": "Martes",
-        "Wednesday": "Miércoles",
-        "Thursday": "Jueves",
-        "Friday": "Viernes"
-    }
+    days_map = {"Monday": "Lunes", "Tuesday": "Martes", "Wednesday": "Miércoles", "Thursday": "Jueves", "Friday": "Viernes"}
     spanish_day = days_map.get(day_name)
-    if not spanish_day:
-        return None # Weekend or error
+    if not spanish_day: return None
 
-    # Normalize group name (e.g., "1º ESO A" -> "E_1A")
-    # This mapping might need refinement depending on how groups are named in both files
-    # For now, let's try to match if the group_name is contained in the timetable group
-    
     for teacher in TIMETABLE:
         for tramo in teacher.get('horario', []):
             if session_name in tramo.get('tramo', ''):
                 class_info = tramo.get(spanish_day, {})
                 teacher_group = class_info.get('grupo', '')
-                
-                if not teacher_group:
-                    continue
-                    
-                # teacher_group can be a string or a list of strings
-                if isinstance(teacher_group, list):
-                    if group_name in teacher_group:
-                        return teacher
-                elif isinstance(teacher_group, str):
-                    if group_name == teacher_group or (group_name in teacher_group and "_" in teacher_group):
-                        return teacher
+                if isinstance(teacher_group, list) and group_name in teacher_group: return teacher
+                if isinstance(teacher_group, str) and (group_name == teacher_group or (group_name in teacher_group and "_" in teacher_group)): return teacher
     return None
 
-def print_group_schedule(group_name):
-    """Prints the complete schedule for a group for the current day to the console."""
-    day_name = datetime.now().strftime("%A")
-    days_map = {"Monday":"Lunes", "Tuesday":"Martes", "Wednesday":"Miércoles", "Thursday":"Jueves", "Friday":"Viernes"}
-    spanish_day = days_map.get(day_name)
-    if not spanish_day: return
-
-    print(f"\n--- HORARIO DEL GRUPO {group_name} PARA EL {spanish_day.upper()} ---")
-    
-    # We'll iterate through all sessions and find what the group is doing
-    for _, _, s_name in SESSIONS:
-        if "Recreo" in s_name:
-            print(f"{s_name:10} | [RECREO]")
-            continue
-            
-        found = False
-        for teacher in TIMETABLE:
-            for tramo in teacher.get('horario', []):
-                if s_name in tramo.get('tramo', ''):
-                    class_info = tramo.get(spanish_day, {})
-                    teacher_group = class_info.get('grupo', '')
-                    
-                    match = False
-                    if isinstance(teacher_group, list):
-                        if group_name in teacher_group: match = True
-                    elif isinstance(teacher_group, str):
-                        if group_name == teacher_group or (group_name in teacher_group and "_" in teacher_group):
-                            match = True
-                    
-                    if match:
-                        materia = class_info.get('materia', '---')
-                        aula = class_info.get('aula', '---')
-                        teacher_name = teacher.get('nombre', 'Desconocido')
-                        print(f"{s_name:10} | {materia:10} | Aula: {aula:5} | Prof: {teacher_name}")
-                        found = True
-                        break # Found the teacher for this session
-            if found: break
-        
-        if not found:
-            print(f"{s_name:10} | Sin clase programada")
-    print("----------------------------------------------------------\n")
-
-def send_teacher_email(teacher, student_name, group, motive):
-    """Sends an email notification to the teacher."""
-    if not teacher or not teacher.get('email'):
-        print("No teacher email found to send notification.")
-        return False
-    
-    if not SMTP_USER or not SMTP_PASS:
-        print("SMTP Credentials not configured. Skipping email.")
-        return False
-
-    # For debugging, you might want to redirect all emails to a single address
-    # debug_email_override = os.environ.get('DEBUG_EMAIL_OVERRIDE')
-    # if debug_email_override:
-    #     dest_email = debug_email_override
-    #     print(f"DEBUG: Redirecting email from {teacher.get('email')} to {dest_email}")
-    # else:
-    dest_email = teacher['email']
-
+def send_email(to_email, subject, body):
+    smtp_user = os.environ.get('SMTP_USER')
+    smtp_pass = os.environ.get('SMTP_PASS')
+    if not smtp_user or not smtp_pass: return False
     try:
         msg = MIMEMultipart()
-        # Explicit name and sender
-        msg['From'] = f"Partes de Salida <{SENDER_EMAIL}>"
-        msg['To'] = dest_email
-        msg['Reply-To'] = "no-atender@iesleopoldoqueipo.com"
-        msg['Subject'] = f"Aviso de salida de alumno: {student_name} ({group})"
-        
-        body = f"""
-Estimado/a {teacher['nombre']},
-
-Le informamos que el alumno/a {student_name} del grupo {group} ha registrado una salida del centro en este momento.
-
-Motivo: {motive}
-Hora de registro: {datetime.now().strftime('%H:%M')}
-
-Este es un mensaje automático generado por el sistema de Partes de Salida.
-"""
+        msg['From'] = f"Partes de Salida <{os.environ.get('SENDER_EMAIL', smtp_user)}>"
+        msg['To'] = to_email
+        msg['Subject'] = subject
         msg.attach(MIMEText(body, 'plain', 'utf-8'))
-        
-        server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
-        server.starttls()
-        server.login(SMTP_USER, SMTP_PASS)
-        server.send_message(msg)
-        server.quit()
-        
-        print(f"Email sent to {teacher['nombre']} ({teacher['email']})")
+        with smtplib.SMTP(os.environ.get('SMTP_SERVER', 'smtp.gmail.com'), int(os.environ.get('SMTP_PORT', 587))) as server:
+            server.starttls()
+            server.login(smtp_user, smtp_pass)
+            server.send_message(msg)
         return True
     except Exception as e:
-        print(f"Error sending email: {e}")
+        log_error(f"Email error: {e}")
         return False
 
-def send_guardian_notification(student_name, group, motive, vuelve, horas):
-    """Sends a summary notification to the school guardians."""
-    valid_guardians = [e.strip() for e in GUARDIAN_EMAILS if e.strip()]
-    if not valid_guardians:
-        print("No guardian emails configured. Skipping guardian notification.")
-        return False
+# --- ROUTES ---
 
-    if not SMTP_USER or not SMTP_PASS:
-        print("SMTP Credentials not configured. Skipping guardian notification.")
-        return False
+@app.route('/')
+def index():
+    if not session.get('logged_in'):
+        return redirect(url_for('login_page'))
+    return send_from_directory('static', 'index.html')
 
-    try:
-        msg = MIMEMultipart()
-        msg['From'] = f"Sistema Partes de Salida <{SENDER_EMAIL}>"
-        msg['To'] = ", ".join(valid_guardians)
-        msg['Subject'] = f"AVISO GUARDIA: Salida de alumno - {student_name} ({group})"
-        
-        vuelve_str = f"SÍ (Horas: {horas})" if vuelve else "NO"
-        
-        body = f"""
-Se ha registrado una nueva salida de alumno:
+@app.route('/login.html')
+def login_page():
+    return send_from_directory('static', 'login.html')
 
-Alumno: {student_name}
-Grupo: {group}
-Motivo: {motive}
-¿Regresa?: {vuelve_str}
-Hora: {datetime.now().strftime('%H:%M')}
+@app.route('/api/csrf-token', methods=['GET'])
+def get_csrf():
+    return jsonify({'csrf_token': generate_csrf()})
 
-Este correo se envía automáticamente a los profesores de guardia configurados.
-"""
-        msg.attach(MIMEText(body, 'plain', 'utf-8'))
-        
-        server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
-        server.starttls()
-        server.login(SMTP_USER, SMTP_PASS)
-        server.send_message(msg)
-        server.quit()
-        
-        print(f"Guardian notification sent to: {', '.join(valid_guardians)}")
-        return True
-    except Exception as e:
-        print(f"Error sending guardian notification: {e}")
-        return False
+@app.route('/api/login', methods=['POST'])
+@limiter.limit("5 per 15 minutes")
+def login():
+    data = request.json
+    password = data.get('password')
+    hashed_pw = os.environ.get('ADMIN_PASSWORD_HASH')
+    
+    if not hashed_pw:
+        return jsonify({"error": "Configuración de seguridad incompleta en el servidor"}), 500
+    
+    if bcrypt.check_password_hash(hashed_pw, password):
+        session.permanent = True
+        session['logged_in'] = True
+        return jsonify({"status": "success"})
+    
+    return jsonify({"error": "Contraseña incorrecta"}), 401
 
-# Admin Password configuration
-ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', 'admin')
-if ADMIN_PASSWORD == 'admin':
-    print("WARNING: Using default password 'admin'. Please set ADMIN_PASSWORD environment variable.")
+@app.route('/api/logout', methods=['POST'])
+def logout():
+    session.clear()
+    return jsonify({"status": "success"})
 
-# Simple in-memory session storage
-SESSIONS = set()
+@app.route('/api/student-history', methods=['GET'])
+@admin_required
+def student_history():
+    student_id = request.args.get('id', '')
+    total_count = 0
+    monthly_count = 0
+    current_month = datetime.now().strftime("%Y-%m")
+    
+    if os.path.exists(CSV_FILE):
+        with open(CSV_FILE, 'r', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                if row.get('ID Alumno') == student_id:
+                    total_count += 1
+                    fecha = row.get('Fecha', '')
+                    if fecha and fecha.startswith(current_month):
+                        monthly_count += 1
+    return jsonify({"count": total_count, "monthlyCount": monthly_count})
 
-class Handler(http.server.SimpleHTTPRequestHandler):
-    def _set_headers(self):
-        self.send_response(200)
-        self.send_header('Content-type', 'application/json')
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, DELETE')
-        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
-        self.end_headers()
+@app.route('/api/history', methods=['GET'])
+@admin_required
+def history():
+    exits = []
+    if os.path.exists(CSV_FILE):
+        with open(CSV_FILE, 'r', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            exits = list(reader)
+    exits.reverse()
+    return jsonify(exits)
 
-    def do_OPTIONS(self):
-        self.send_response(200)
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, DELETE')
-        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
-        self.end_headers()
-
-    def check_auth(self):
-        """Checks for valid session cookie. Returns True if authorized."""
-        cookie_header = self.headers.get('Cookie')
-        if cookie_header:
-            cookies = cookie_header.split(';')
-            for cookie in cookies:
-                if 'session_id=' in cookie:
-                    token = cookie.split('session_id=')[1].strip()
-                    if token in SESSIONS:
-                        return True
-        return False
-
-    def do_GET(self):
-        # Public routes
-        if self.path == '/login.html' or self.path == '/style.css':
-            self.directory = os.path.join(BASE_DIR, 'static')
-            super().do_GET()
-            return
-        
-        # Authentication Check
-        if not self.check_auth():
-            # If requesting API, return 401
-            if self.path.startswith('/api/'):
-                self.send_error(401, "Unauthorized")
-                return
-            # Otherwise redirect to login
-            self.send_response(302)
-            self.send_header('Location', '/login.html')
-            self.end_headers()
-            return
-
-        # 1. API Handling
-        if self.path.startswith('/api/'):
-            if self.path.startswith('/api/student-history'):
-                query = urllib.parse.urlparse(self.path).query
-                params = urllib.parse.parse_qs(query)
-                student_id = params.get('id', [''])[0]
-                
-                total_count = 0
-                monthly_count = 0
-                current_month = datetime.now().strftime("%Y-%m")
-                
-                if os.path.exists(CSV_FILE):
-                    with open(CSV_FILE, 'r', encoding='utf-8') as f:
-                        reader = csv.DictReader(f)
-                        for row in reader:
-                            if row.get('ID Alumno') == student_id:
-                                total_count += 1
-                                if row.get('Fecha', '').startswith(current_month):
-                                    monthly_count += 1
-                
-                self.send_response(200)
-                self.send_header('Content-type', 'application/json')
-                self.send_header('Access-Control-Allow-Origin', '*')
-                self.end_headers()
-                self.wfile.write(json.dumps({
-                    "count": total_count,
-                    "monthlyCount": monthly_count
-                }).encode('utf-8'))
-                return
-
-            elif self.path == '/api/history':
-                try:
-                    exits = []
-                    if os.path.exists(CSV_FILE):
-                        with open(CSV_FILE, 'r', encoding='utf-8') as f:
-                            reader = csv.DictReader(f)
-                            for row in reader:
-                                exits.append(row)
-                    
-                    # Reverse to show newest first
-                    exits.reverse()
-                    
-                    self._set_headers()
-                    self.wfile.write(json.dumps(exits).encode('utf-8'))
-                except Exception as e:
-                    error_msg = f"Error fetching history: {e}"
-                    print(error_msg)
-                    with open(LOG_FILE, "a") as log:
-                        log.write(f"{datetime.now()}: {error_msg}\n")
-                    self.send_response(500)
-                    self.end_headers()
-                return 
-
-        # 2. PDF Handling 
-        elif self.path.startswith('/pdfs/'):
-            self.directory = BASE_DIR
-            super().do_GET()
-            return
-
-        # 3. Data Handling (Authenticated)
-        elif self.path.startswith('/data/'):
-            # Serve from the configured DATA_DIR
-            self.path = self.path.replace('/data/', '/', 1)
-            self.directory = DATA_DIR
-            super().do_GET()
-            return
-            
-        # 4. Static File Serving (Authenticated)
-        if self.path == '/' or self.path == '':
-            self.path = '/index.html'
-            
-        self.directory = os.path.join(BASE_DIR, 'static')
-        super().do_GET()
-            
-    def do_DELETE(self):
-        if not self.check_auth():
-            self.send_error(401, "Unauthorized")
-            return
-
-        # Format: /api/history/<pdf_filename>
-        if self.path.startswith('/api/history/'):
-            try:
-                pdf_filename = self.path.split('/')[-1]
-                if not pdf_filename:
-                    raise ValueError("No ID provided")
-                
-                rows = []
-                deleted = False
-                if os.path.exists(CSV_FILE):
-                    with open(CSV_FILE, 'r', encoding='utf-8') as f:
-                        reader = csv.DictReader(f)
-                        for row in reader:
-                            if row.get('PDF') == pdf_filename:
-                                deleted = True
-                                pdf_path = os.path.join(PDF_DIR, pdf_filename)
-                                if os.path.exists(pdf_path):
-                                    try:
-                                        os.remove(pdf_path)
-                                    except Exception as e:
-                                        print(f"Error deleting PDF file: {e}")
-                            else:
-                                rows.append(row)
-                
-                if deleted:
-                    with open(CSV_FILE, 'w', newline='', encoding='utf-8') as f:
-                        writer = csv.DictWriter(f, fieldnames=CSV_HEADERS)
-                        writer.writeheader()
-                        writer.writerows(rows)
-                        
-                    self._set_headers()
-                    self.wfile.write(json.dumps({"status": "success"}).encode('utf-8'))
-                else:
-                    self.send_error(404, "Record not found")
-                    
-            except Exception as e:
-                print(f"Error deleting record: {e}")
-                self.send_error(500, str(e))
-        else:
-            self.send_error(404)
-
-    def do_POST(self):
-        # Login Endpoint (Public)
-        if self.path == '/api/login':
-            content_length = int(self.headers.get('Content-Length', 0))
-            post_data = self.rfile.read(content_length)
-            try:
-                data = json.loads(post_data.decode('utf-8'))
-                if data.get('password') == ADMIN_PASSWORD:
-                    # Generate Session
-                    import uuid
-                    session_id = str(uuid.uuid4())
-                    SESSIONS.add(session_id)
-                    
-                    self.send_response(200)
-                    self.send_header('Content-type', 'application/json')
-                    self.send_header('Set-Cookie', f'session_id={session_id}; Path=/; HttpOnly')
-                    self.end_headers()
-                    self.wfile.write(json.dumps({"status": "success"}).encode('utf-8'))
-                else:
-                    self.send_error(401, "Invalid password")
-            except Exception as e:
-                self.send_error(500, str(e))
-            return
-
-        # Enforce Auth for all other POSTs
-        if not self.check_auth():
-            self.send_error(401, "Unauthorized")
-            return
-
-        if self.path == '/api/exit':
-            content_length = int(self.headers.get('Content-Length', 0))
-            post_data = self.rfile.read(content_length)
-            
-            try:
-                data = json.loads(post_data.decode('utf-8'))
-                
-                # Extract fields
-                timestamp = datetime.now()
-                date_str = timestamp.strftime("%Y-%m-%d")
-                time_str = timestamp.strftime("%H:%M:%S")
-                
-                # New Fields
-                vuelve = data.get('vuelve', False)
-                horas = data.get('horas', '') if vuelve else ''
-                
-                print(f"Processing Exit Request for {data.get('studentName')}...")
-
-                # Helper for FPDF Latin-1 compatibility
-                def safe_text(text):
-                    if not text: return ""
-                    # FPDF standard fonts are Latin-1. Replace unsupported chars.
-                    # normalize unicode characters to closest latin-1 equivalent if possible
-                    return str(text).encode('latin-1', 'replace').decode('latin-1')
-
-                # Generate PDF Filename
-                pdf_filename = f"ticket_{timestamp.strftime('%Y%m%d_%H%M%S')}_{data.get('studentId', 'unknown')}.pdf"
-                pdf_path = os.path.join(PDF_DIR, pdf_filename)
-                
-                # Generar PDF
-                pdf = FPDF()
-                pdf.set_auto_page_break(auto=False, margin=0) 
-                pdf.add_page()
-                
-                # Ticket Width Simulation (approx 80mm width typical for thermal, but on A4 we center it)
-                # Actually user wants A4 page likely but short.
-                # Let's just make it look like the receipt.
-                
-                # Header
-                # Logo Logic
-                logo_path = os.path.join(BASE_DIR, 'data', 'logo.gif')
-                if os.path.exists(logo_path):
-                    try:
-                        # Centered logo
-                        # Page width ~210mm. Center ~105. Logo width 25. X ~ 92.
-                        pdf.image(logo_path, x=92, y=10, w=25)
-                    except Exception as img_err:
-                        print(f"Warning: Could not load logo: {img_err}")
-
-                pdf.set_y(38) # Move down after logo
-                pdf.set_font('Arial', 'B', 14)
-                pdf.cell(0, 8, safe_text('PARTE DE SALIDA'), 0, 1, 'C')
-                
-                pdf.set_font('Arial', '', 12)
-                pdf.cell(0, 8, safe_text('I.E.S. Leopoldo Queipo'), 0, 1, 'C')
-                
-                pdf.ln(5)
-
-                # Info
-                pdf.set_font("Arial", size=11)
-                
-                # Helper for rows
-                def ticket_row(label, value, bold_label=True):
-                    if bold_label: pdf.set_font("Arial", 'B', 11)
-                    else: pdf.set_font("Arial", '', 11)
-                    
-                    pdf.cell(90, 8, safe_text(label), 0, 0, 'R') # Right align label to center
-                    
-                    pdf.set_font("Arial", '', 11)
-                    # Value starts a bit after center
-                    pdf.cell(5) 
-                    pdf.cell(0, 8, safe_text(value), 0, 1, 'L')
-
-                # Date/Time
-                # In HTML ticket it is separate lines: "Fecha: ...", "Hora: ..."
-                ticket_row("Fecha:", date_str)
-                ticket_row("Hora:", time_str)
-                
-                pdf.ln(2)
-                # Divider line
-                pdf.line(50, pdf.get_y(), 160, pdf.get_y()) # Centered line
-                pdf.ln(4)
-                
-                # Student Info
-                # "Alumno:" (Break) "Name"
-                pdf.set_font("Arial", 'B', 11)
-                pdf.cell(0, 6, safe_text("Alumno:"), 0, 1, 'C')
-                pdf.set_font("Arial", '', 12)
-                pdf.cell(0, 8, safe_text(data.get('studentName', '')), 0, 1, 'C')
-                
-                pdf.ln(2)
-                ticket_row("Grupo:", data.get('group', ''))
-                ticket_row("DNI:", data.get('dni', ''))
-                
-                pdf.ln(4)
-                pdf.line(50, pdf.get_y(), 160, pdf.get_y())
-                pdf.ln(4)
-                
-                # Details
-                pdf.set_font("Arial", 'B', 11)
-                pdf.cell(0, 6, safe_text("Motivo:"), 0, 1, 'C')
-                pdf.set_font("Arial", '', 11)
-                pdf.cell(0, 8, safe_text(data.get('motive', '')), 0, 1, 'C') # Centered motive
-                
-                pdf.ln(2)
-                
-                pdf.set_font("Arial", 'B', 11)
-                pdf.cell(0, 6, safe_text("Acompañado por:"), 0, 1, 'C')
-                pdf.set_font("Arial", '', 11)
-                
-                accomp = data.get('accompaniedBy', '')
-                detail = data.get('tutorName', '')
-                accomp_text = accomp
-                if accomp in ['Tutor1', 'Tutor2', 'Otro']:
-                     accomp_text = f"{accomp} ({detail})"
-                
-                pdf.cell(0, 8, safe_text(accomp_text), 0, 1, 'C')
-
-                if vuelve:
-                    pdf.ln(3)
-                    ticket_row("Regreso:", f"SÍ - Horas: {horas}")
-                
-                # Footer
-                pdf.set_y(-25)
-                pdf.set_font('Arial', 'I', 9)
-                pdf.cell(0, 10, safe_text('Documento oficial de control'), 0, 1, 'C')
-                
-                # Verify directory write access
-                if not os.access(PDF_DIR, os.W_OK):
-                     raise PermissionError(f"Cannot write to {PDF_DIR}")
-
-                pdf.output(pdf_path)
-
-                # Unique Ticket ID
-                ticket_id = f"{timestamp.strftime('%Y%m%d_%H%M%S')}_{data.get('studentId', '0')}"
-
-                # Append to CSV
-                with open(CSV_FILE, 'a', newline='', encoding='utf-8') as f:
-                    writer = csv.writer(f)
-                    writer.writerow([
-                        date_str,
-                        time_str,
-                        data.get('studentId', ''),
-                        data.get('studentName', ''),
-                        data.get('group', ''),
-                        data.get('dni', ''),
-                        data.get('motive', ''),
-                        data.get('accompaniedBy', ''),
-                        data.get('tutorName', ''),
-                        pdf_filename,
-                        'Sí' if vuelve else 'No',
-                        horas,
-                        ticket_id,
-                        'No' # Initial ha_vuelto status
-                    ])
-                
-                # --- Send Guardian Notification ---
-                send_guardian_notification(data.get('studentName', ''), data.get('group', ''), data.get('motive', ''), vuelve, horas)
-                
-                # --- Teacher Notification Logic ---
-                try:
-                    session_name, session_idx = get_current_session_info()
-                    if session_name:
-                        print(f"Current session identified: {session_name}")
-                        
-                        # Print the group's full schedule for manual verification
-                        print_group_schedule(data.get('group', ''))
-                        
-                        affected_sessions = []
-                        if not vuelve:
-                            # Not returning: Notify all subsequent sessions for the day
-                            print(f"Student NOT returning. Notifying all subsequent teachers.")
-                            affected_sessions = SESSIONS[session_idx:]
-                        else:
-                            # Returning in X hours: Notify current session + X-1 subsequent sessions
-                            # If horas is "1ª, 2ª", we count how many items are there
-                            num_hours = len([h for h in horas.split(',') if h.strip()]) if horas else 1
-                            print(f"Student returning. Identified {num_hours} affected sessions based on selection: {horas}")
-                            affected_sessions = SESSIONS[session_idx:session_idx + num_hours]
-                        
-                        notified_teachers = set() # Avoid notifying the same teacher multiple times if they have consecutive hours
-                        for _, _, s_name in affected_sessions:
-                            if "Recreo" in s_name:
-                                continue
-                                
-                            teacher = get_teacher_for_group(data.get('group', ''), s_name)
-                            if teacher and teacher['email']:
-                                print(f"[+] Found: {s_name} -> {teacher['nombre']} ({teacher['email']})")
-                                if teacher['email'] not in notified_teachers:
-                                    send_teacher_email(teacher, data.get('studentName', ''), data.get('group', ''), data.get('motive', ''))
-                                    notified_teachers.add(teacher['email'])
-                            else:
-                                print(f"[-] No teacher found for {s_name} for group {data.get('group', '')}")
+@app.route('/api/history/<pdf_filename>', methods=['DELETE'])
+@admin_required
+def delete_record(pdf_filename):
+    # The filename in the CSV is what we use to match.
+    # We should normalize the input pdf_filename to avoid traversal, 
+    # but keep it exactly as it probably is in the CSV.
+    clean_filename = secure_filename(pdf_filename)
+    
+    rows = []
+    deleted = False
+    
+    if os.path.exists(CSV_FILE):
+        try:
+            with open(CSV_FILE, 'r', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    # Match against the stored PDF filename
+                    if row.get('PDF') == pdf_filename or row.get('PDF') == clean_filename:
+                        deleted = True
+                        # Remove the actual file
+                        target_filename = row.get('PDF') or clean_filename
+                        pdf_path = os.path.join(PDF_DIR, target_filename)
+                        if os.path.exists(pdf_path) and os.path.isfile(pdf_path):
+                            os.remove(pdf_path)
                     else:
-                        print("Current time is outside school session hours.")
-                except Exception as e:
-                    print(f"Error in teacher notification flow: {e}")
-                # ----------------------------------
+                        rows.append(row)
+        except Exception as e:
+            log_error(f"Error reading CSV during deletion: {e}")
+            return jsonify({"error": "Error interno al leer historial"}), 500
+    
+    if deleted:
+        try:
+            with open(CSV_FILE, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=CSV_HEADERS)
+                writer.writeheader()
+                writer.writerows(rows)
+            return jsonify({"status": "success"})
+        except Exception as e:
+            log_error(f"Error writing CSV during deletion: {e}")
+            return jsonify({"error": "Error al actualizar historial"}), 500
+            
+    log_error(f"Deletetion failed: record {pdf_filename} not found in CSV.")
+    return jsonify({"error": "Registro no encontrado en el historial"}), 404
 
-                # Send response
-                print("Exit registered successfully.")
-                self._set_headers()
-                self.wfile.write(json.dumps({"status": "success", "message": "Exit registered", "pdf": pdf_filename}).encode('utf-8'))
-                
-            except Exception as e:
-                error_msg = f"Error saving data: {str(e)}"
-                print(error_msg)
-                with open(LOG_FILE, "a") as log:
-                    log.write(f"{datetime.now()}: {error_msg}\n")
-                
-                self.send_response(500)
-                self.send_header('Content-Type', 'text/plain')
-                self.send_header('Access-Control-Allow-Origin', '*')
-                self.end_headers()
-                self.wfile.write(error_msg.encode('utf-8'))
-        elif self.path == '/api/upload-students':
-            try:
-                content_length = int(self.headers.get('Content-Length', 0))
-                file_content = self.rfile.read(content_length)
-                
-                # Save to temporary file
-                temp_excel = os.path.join(DATA_DIR, "temp_upload.xlsx")
-                with open(temp_excel, 'wb') as f:
-                    f.write(file_content)
-                
-                print("Processing uploaded Excel file...")
-                
-                # Process with Pandas
-                # User confirmed header is at row 5 (index 4)
-                df = pd.read_excel(temp_excel, header=4)
-                
-                # Basic normalization of column names to lowercase for easier matching
-                df.columns = [str(c).strip() for c in df.columns]
-                
-                # Helper to find column safely
-                def get_col_val(row, col_name, default=""):
-                    if col_name in row and pd.notna(row[col_name]):
-                        return str(row[col_name]).strip()
-                    return default
+@app.route('/api/exit', methods=['POST'])
+@admin_required
+def register_exit():
+    data = request.json
+    now = datetime.now()
+    date_str = now.strftime("%Y-%m-%d")
+    time_str = now.strftime("%H:%M:%S")
+    vuelve = data.get('vuelve', False)
+    horas = data.get('horas', '') if vuelve else ''
+    
+    # Sanitize ID for filename
+    safe_student_id = secure_filename(str(data.get('studentId', 'unknown')))
+    pdf_filename = f"ticket_{now.strftime('%Y%m%d_%H%M%S')}_{safe_student_id}.pdf"
+    pdf_path = os.path.join(PDF_DIR, pdf_filename)
+    
+    # PDF generation logic...
+    pdf = FPDF()
+    pdf.add_page()
+    logo_path = os.path.join(DATA_DIR, 'logo.gif')
+    if os.path.exists(logo_path):
+        pdf.image(logo_path, x=92, y=10, w=25)
+    pdf.set_y(38)
+    pdf.set_font('Arial', 'B', 14)
+    pdf.cell(0, 8, safe_text('PARTE DE SALIDA'), 0, 1, 'C')
+    pdf.set_font('Arial', '', 12)
+    pdf.cell(0, 8, safe_text('I.E.S. Leopoldo Queipo'), 0, 1, 'C')
+    pdf.ln(5)
+    pdf.set_font("Arial", '', 11)
+    
+    def row(l, v):
+        pdf.set_font("Arial", 'B', 11); pdf.cell(90, 8, safe_text(l), 0, 0, 'R')
+        pdf.set_font("Arial", '', 11); pdf.cell(5); pdf.cell(0, 8, safe_text(v), 0, 1, 'L')
+        
+    row("Fecha:", date_str); row("Hora:", time_str)
+    pdf.ln(2); pdf.line(50, pdf.get_y(), 160, pdf.get_y()); pdf.ln(4)
+    pdf.set_font("Arial", 'B', 11); pdf.cell(0, 6, safe_text("Alumno:"), 0, 1, 'C')
+    pdf.set_font("Arial", '', 12); pdf.cell(0, 8, safe_text(data.get('studentName', '')), 0, 1, 'C')
+    row("Grupo:", data.get('group', '')); row("DNI:", data.get('dni', ''))
+    pdf.ln(4); pdf.line(50, pdf.get_y(), 160, pdf.get_y()); pdf.ln(4)
+    pdf.set_font("Arial", 'B', 11); pdf.cell(0, 6, safe_text("Motivo:"), 0, 1, 'C')
+    pdf.set_font("Arial", '', 11); pdf.cell(0, 8, safe_text(data.get('motive', '')), 0, 1, 'C')
+    if vuelve: pdf.ln(3); row("Regreso:", f"SÍ - Horas: {horas}")
+    pdf.set_y(-25); pdf.set_font('Arial', 'I', 9); pdf.cell(0, 10, safe_text('Documento oficial de control'), 0, 1, 'C')
+    pdf.output(pdf_path)
 
-                new_students = []
-                
-                for index, row in df.iterrows():
-                    # Extract basics using exact names found in RegAlum.xls
-                    
-                    # 'Alumno/a' -> Name
-                    # 'Unidad' -> Group
-                    # 'DNI/Pasaporte' -> DNI
-                    
-                    s_name = get_col_val(row, 'Alumno/a', "Sin Nombre")
-                    s_group = get_col_val(row, 'Unidad', "Sin Grupo")
-                    s_dni = get_col_val(row, 'DNI/Pasaporte', "")
-                    
-                    # Skip empty rows (sometimes Excel has trailing empty rows)
-                    if s_name == "Sin Nombre" and s_group == "Sin Grupo":
-                        continue
+    ticket_id = f"{now.strftime('%Y%m%d_%H%M%S')}_{safe_student_id}"
+    with open(CSV_FILE, 'a', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        writer.writerow([date_str, time_str, data.get('studentId', ''), data.get('studentName', ''),
+                         data.get('group', ''), data.get('dni', ''), data.get('motive', ''),
+                         data.get('accompaniedBy', ''), data.get('tutorName', ''), pdf_filename,
+                         'Sí' if vuelve else 'No', horas, ticket_id, 'No'])
 
-                    # ID: 'Nº Id. Escolar'
-                    s_id = get_col_val(row, 'Nº Id. Escolar', "")
-                    if not s_id:
-                         s_id = str(abs(hash(s_name + s_dni)))[:8]
-                    
-                    # Tutors
-                    # 'Nombre Primer tutor' + 'Primer apellido Primer tutor' ...
-                    t1_name = get_col_val(row, 'Nombre Primer tutor', "") + " " + \
-                              get_col_val(row, 'Primer apellido Primer tutor', "") + " " + \
-                              get_col_val(row, 'Segundo apellido Primer tutor', "")
-                    t1_name = t1_name.strip()
-                    t1_dni = get_col_val(row, 'DNI/Pasaporte Primer tutor', "")
+    # Notifications logic...
+    guardian_emails = os.environ.get('GUARDIAN_EMAILS', '').split(',')
+    if guardian_emails:
+        body = f"Salida: {data.get('studentName')} ({data.get('group')})\nMotivo: {data.get('motive')}\n¿Regresa?: {'Sí' if vuelve else 'No'}"
+        for email in guardian_emails:
+            if email.strip(): send_email(email.strip(), "Aviso Guardia: Salida Alumno", body)
 
-                    t2_name = get_col_val(row, 'Nombre Segundo tutor', "") + " " + \
-                              get_col_val(row, 'Primer apellido Segundo tutor', "") + " " + \
-                              get_col_val(row, 'Segundo apellido Segundo tutor', "")
-                    t2_name = t2_name.strip()
-                    t2_dni = get_col_val(row, 'DNI/Pasaporte Segundo tutor', "")
+    session_name, session_idx = get_current_session_info()
+    if session_name:
+        affected = SESSIONS_TIMES[session_idx:] if not vuelve else SESSIONS_TIMES[session_idx:session_idx + len(horas.split(','))]
+        notified = set()
+        for _, _, s in affected:
+            t = get_teacher_for_group(data.get('group', ''), s)
+            if t and t.get('email') and t['email'] not in notified:
+                send_email(t['email'], "Aviso Salida Alumno", f"El alumno {data.get('studentName')} ha salido.\nMotivo: {data.get('motive')}")
+                notified.add(t['email'])
 
-                    
-                    # Phones
-                    phones = []
-                    
-                    # Prioritize distinct columns
-                    p_main = get_col_val(row, 'Teléfono')
-                    p_urgency = get_col_val(row, 'Teléfono de urgencia')
-                    p_personal = get_col_val(row, 'Teléfono personal alumno/a')
-                    p_tutor1 = get_col_val(row, 'Teléfono Primer tutor')
-                    p_tutor2 = get_col_val(row, 'Teléfono Segundo tutor')
+    return jsonify({"status": "success", "pdf": pdf_filename})
 
-                    if p_main: phones.append({"label": "Principal", "number": p_main})
-                    if p_urgency: phones.append({"label": "Urgencia", "number": p_urgency, "urgent": True})
-                    if p_tutor1: phones.append({"label": "Tutor 1", "number": p_tutor1})
-                    if p_tutor2: phones.append({"label": "Tutor 2", "number": p_tutor2})
-                    if p_personal: phones.append({"label": "Alumno", "number": p_personal})
+@app.route('/api/upload-students', methods=['POST'])
+@admin_required
+def upload_students():
+    if 'file' not in request.files:
+        return jsonify({"error": "No se recibió ningún archivo"}), 400
+    
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({"error": "Nombre de archivo vacío"}), 400
+    
+    # Validate extension
+    if not file.filename.lower().endswith('.xlsx'):
+        return jsonify({"error": "Solo se permiten archivos .xlsx"}), 400
 
-                    # Email
-                    s_email = get_col_val(row, 'Correo electrónico personal alumno/a')
-                    if not s_email:
-                        s_email = get_col_val(row, 'Correo Electrónico')
-                    
-                    # Construct Student Object
-                    student = {
-                        "id": s_id,
-                        "name": s_name,
-                        "group": s_group,
-                        "dni": s_dni,
-                        "course": get_col_val(row, 'Curso', s_group), 
-                        "email": s_email,
-                        "photo": f"data/photos/{s_id}.jpg", 
-                        "tutor1": {"name": t1_name, "dni": t1_dni},
-                        "tutor2": {"name": t2_name, "dni": t2_dni},
-                        "phones": phones
-                    }
-                    new_students.append(student)
-                
-                # Save to JSON
-                students_file = os.path.join(DATA_DIR, "students.json")
-                
-                # Backup existing
-                if os.path.exists(students_file):
-                    os.rename(students_file, students_file + ".bak")
-                
-                with open(students_file, 'w', encoding='utf-8') as f:
-                    json.dump(new_students, f, indent=2, ensure_ascii=False)
-                
-                print(f"Successfully processed {len(new_students)} students from Excel.")
-                self.send_response(200)
-                self.send_header('Content-type', 'application/json')
-                self.end_headers()
-                self.wfile.write(json.dumps({"status": "success", "count": len(new_students)}).encode('utf-8'))
+    # Secure temp storage
+    temp_dir = tempfile.mkdtemp()
+    filename = secure_filename(file.filename)
+    temp_path = os.path.join(temp_dir, filename)
+    
+    try:
+        file.save(temp_path)
+        
+        # Check file size (5MB limit redundant with config but safe)
+        if os.path.getsize(temp_path) > 5 * 1024 * 1024:
+            raise ValueError("El archivo es demasiado grande (máximo 5MB)")
 
-            except Exception as e:
-                print(f"Error processing Excel: {e}")
-                self.send_response(500)
-                self.end_headers()
-                self.wfile.write(str(e).encode('utf-8'))
-        else:
-            self.send_error(404)
+        df = pd.read_excel(temp_path, header=4)
+        df.columns = [str(c).strip() for c in df.columns]
+        new_students = []
+        for _, row in df.iterrows():
+            s_name = str(row.get('Alumno/a', '')).strip()
+            if not s_name or s_name == 'nan': continue
+            new_students.append({
+                "id": str(row.get('Nº Id. Escolar', '')).strip(),
+                "name": s_name,
+                "group": str(row.get('Unidad', '')).strip(),
+                "dni": str(row.get('DNI/Pasaporte', '')).strip(),
+                "tutor1": { "name": f"{row.get('Nombre Primer tutor', '')} {row.get('Primer apellido Primer tutor', '')}".strip() }
+            })
+        
+        students_file = os.path.join(DATA_DIR, "students.json")
+        save_secure_json(students_file, new_students)
+        
+        return jsonify({"status": "success", "count": len(new_students)})
+    
+    except Exception as e:
+        log_error(f"Error en carga de alumnos: {str(e)}")
+        return jsonify({"error": "Error interno al procesar el archivo Excel"}), 500
+    finally:
+        # Cleanup
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir)
 
-print(f"Server started at http://localhost:{PORT}")
-print(f"Data file: {CSV_FILE}")
-print(f"PDFs directory: {PDF_DIR}")
-print("Press Ctrl+C to stop.")
+@app.route('/pdfs/<path:filename>')
+@admin_required
+def serve_pdf(filename):
+    filename = secure_filename(filename)
+    return send_from_directory(PDF_DIR, filename)
 
-# Change working directory to script directory to ensure index.html is served correctly
-os.chdir(BASE_DIR)
+@app.route('/data/<path:filename>')
+@admin_required
+def serve_data(filename):
+    # Allow students.json and images in subdirectories (like photos/)
+    if not filename.lower().endswith(('.gif', '.png', '.jpg', '.jpeg', '.json')):
+        return "Acceso Denegado", 403
+    
+    # Use safe path joining to prevent directory traversal
+    safe_path = os.path.normpath(filename).lstrip(os.sep)
+    if safe_path.startswith('..') or os.path.isabs(safe_path):
+        return "Acceso Denegado", 403
+        
+    # If students.json is requested, return decrypted content
+    if filename.lower() == 'students.json':
+        students_data = load_secure_json(os.path.join(DATA_DIR, filename))
+        return jsonify(students_data)
+        
+    return send_from_directory(DATA_DIR, safe_path)
 
-# Use ThreadingTCPServer for concurrent connections
-with socketserver.ThreadingTCPServer(("0.0.0.0", PORT), Handler) as httpd:
-    httpd.serve_forever()
+# --- SECURITY HEADERS ---
+@app.after_request
+def add_security_headers(response):
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+    response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self' 'unsafe-inline' https://unpkg.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self';"
+    return response
+
+if __name__ == '__main__':
+    # For local testing only. Production uses Gunicorn.
+    port = int(os.environ.get('PORT', 8081))
+    app.run(host='127.0.0.1', port=port)

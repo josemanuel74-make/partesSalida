@@ -780,9 +780,23 @@ body {
     transition: all 0.2s ease;
 }
 
+.delete-btn {
+    background: rgba(239, 68, 68, 0.15);
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    color: #f87171;
+    padding: 6px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+}
+
 .delete-btn:hover {
-    color: #ef4444;
-    background: rgba(239, 68, 68, 0.1);
+    background: #ef4444;
+    color: white;
+    transform: scale(1.1);
+    box-shadow: 0 0 12px rgba(239, 68, 68, 0.4);
 }
 
 .hist-stat-card {

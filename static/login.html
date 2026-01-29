@@ -87,16 +87,30 @@
     </div>
 
     <script>
+        async function getCsrfToken() {
+            try {
+                const res = await fetch('/api/csrf-token');
+                const data = await res.json();
+                return data.csrf_token;
+            } catch (e) {
+                console.error("Error fetching CSRF token", e);
+                return null;
+            }
+        }
+
         document.getElementById('loginForm').addEventListener('submit', async (e) => {
             e.preventDefault();
             const password = document.getElementById('password').value;
             const errorMsg = document.getElementById('errorMsg');
+            errorMsg.style.display = 'none';
 
             try {
+                const csrfToken = await getCsrfToken();
                 const response = await fetch('/api/login', {
                     method: 'POST',
                     headers: {
-                        'Content-Type': 'application/json'
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrfToken
                     },
                     body: JSON.stringify({ password })
                 });
@@ -104,6 +118,8 @@
                 if (response.ok) {
                     window.location.href = '/';
                 } else {
+                    const data = await response.json();
+                    errorMsg.textContent = data.error || 'Contraseña incorrecta';
                     errorMsg.style.display = 'block';
                 }
             } catch (error) {
