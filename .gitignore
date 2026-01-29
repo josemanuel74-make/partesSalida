@@ -1,6 +1,7 @@
 # Sensitive Data
 .env
 data/
+!data/logo.gif
 pdfs/
 *.xls
 *.xlsx
