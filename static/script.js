@@ -784,4 +784,22 @@ document.addEventListener('DOMContentLoaded', () => {
         }, 4000);
     }
 
+    async function handleLogout() {
+        if (!confirm('¿Seguro que quieres cerrar la sesión?')) return;
+        try {
+            const res = await fetch('/api/logout', {
+                method: 'POST',
+                headers: { 'X-CSRFToken': csrfToken }
+            });
+            if (res.ok) {
+                window.location.href = '/login.html';
+            } else {
+                window.location.href = '/login.html';
+            }
+        } catch (e) {
+            console.error(e);
+            window.location.href = '/login.html';
+        }
+    }
+
 });
