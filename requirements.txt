@@ -11,3 +11,4 @@ python-dotenv>=1.0.0
 flask-wtf>=1.2.1
 redis>=5.0.0
 cryptography>=42.0.0
+Pillow>=10.0.0
