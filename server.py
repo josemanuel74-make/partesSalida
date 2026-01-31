@@ -411,11 +411,11 @@ def register_exit():
             # Email Templates (Teacher templates are the master ones now)
             teacher_subject_tpl = os.environ.get('EMAIL_TEACHER_SUBJECT', "Aviso Salida Alumno: {periodo}")
             teacher_body_tpl = os.environ.get('EMAIL_TEACHER_BODY', 
-                "El alumno {alumno} del grupo {grupo} ha salido del centro.\nMotivo: {motivo}\nPeriodo afectado: {periodo}\n¿Regresa?: {regreso}\n\n--- mensaje automático ---")
+                "El alumno {alumno} del grupo {grupo} ha salido del centro.\nMotivo: {motivo}\nPeriodo afectado: {periodo}\n¿Regresa?: {regreso}\n\n--- mensaje automático ---").replace('\\n', '\n')
             
             # Guardian templates fallback to teacher templates for consistency
             guardian_subject_tpl = os.environ.get('EMAIL_GUARDIAN_SUBJECT', teacher_subject_tpl)
-            guardian_body_tpl = os.environ.get('EMAIL_GUARDIAN_BODY', teacher_body_tpl)
+            guardian_body_tpl = os.environ.get('EMAIL_GUARDIAN_BODY', teacher_body_tpl).replace('\\n', '\n')
 
             regreso_text = f"Sí ({horas})" if vuelve else "No"
             
