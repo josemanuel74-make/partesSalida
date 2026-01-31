@@ -336,74 +336,91 @@ def delete_record(pdf_filename):
 @app.route('/api/exit', methods=['POST'])
 @admin_required
 def register_exit():
-    data = request.json
-    now = datetime.now()
-    date_str = now.strftime("%Y-%m-%d")
-    time_str = now.strftime("%H:%M:%S")
-    vuelve = data.get('vuelve', False)
-    horas = data.get('horas', '') if vuelve else ''
-    
-    # Sanitize ID for filename
-    safe_student_id = secure_filename(str(data.get('studentId', 'unknown')))
-    pdf_filename = f"ticket_{now.strftime('%Y%m%d_%H%M%S')}_{safe_student_id}.pdf"
-    pdf_path = os.path.join(PDF_DIR, pdf_filename)
-    
-    # PDF generation logic...
-    pdf = FPDF()
-    pdf.add_page()
-    logo_path = os.path.join(DATA_DIR, 'logo.gif')
-    if os.path.exists(logo_path):
-        pdf.image(logo_path, x=92, y=10, w=25)
-    pdf.set_y(38)
-    pdf.set_font('Arial', 'B', 14)
-    pdf.cell(0, 8, safe_text('PARTE DE SALIDA'), 0, 1, 'C')
-    pdf.set_font('Arial', '', 12)
-    pdf.cell(0, 8, safe_text('I.E.S. Leopoldo Queipo'), 0, 1, 'C')
-    pdf.ln(5)
-    pdf.set_font("Arial", '', 11)
-    
-    def row(l, v):
-        pdf.set_font("Arial", 'B', 11); pdf.cell(90, 8, safe_text(l), 0, 0, 'R')
-        pdf.set_font("Arial", '', 11); pdf.cell(5); pdf.cell(0, 8, safe_text(v), 0, 1, 'L')
+    try:
+        data = request.json
+        now = datetime.now()
+        date_str = now.strftime("%Y-%m-%d")
+        time_str = now.strftime("%H:%M:%S")
+        vuelve = data.get('vuelve', False)
+        horas = data.get('horas', '') if vuelve else ''
         
-    row("Fecha:", date_str); row("Hora:", time_str)
-    pdf.ln(2); pdf.line(50, pdf.get_y(), 160, pdf.get_y()); pdf.ln(4)
-    pdf.set_font("Arial", 'B', 11); pdf.cell(0, 6, safe_text("Alumno:"), 0, 1, 'C')
-    pdf.set_font("Arial", '', 12); pdf.cell(0, 8, safe_text(data.get('studentName', '')), 0, 1, 'C')
-    row("Grupo:", data.get('group', '')); row("DNI:", data.get('dni', ''))
-    pdf.ln(4); pdf.line(50, pdf.get_y(), 160, pdf.get_y()); pdf.ln(4)
-    pdf.set_font("Arial", 'B', 11); pdf.cell(0, 6, safe_text("Motivo:"), 0, 1, 'C')
-    pdf.set_font("Arial", '', 11); pdf.cell(0, 8, safe_text(data.get('motive', '')), 0, 1, 'C')
-    if vuelve: pdf.ln(3); row("Regreso:", f"SÍ - Horas: {horas}")
-    pdf.set_y(-25); pdf.set_font('Arial', 'I', 9); pdf.cell(0, 10, safe_text('Documento oficial de control'), 0, 1, 'C')
-    pdf.output(pdf_path)
+        # Sanitize ID for filename
+        safe_student_id = secure_filename(str(data.get('studentId', 'unknown')))
+        pdf_filename = f"ticket_{now.strftime('%Y%m%d_%H%M%S')}_{safe_student_id}.pdf"
+        pdf_path = os.path.join(PDF_DIR, pdf_filename)
+        
+        # PDF generation logic...
+        try:
+            pdf = FPDF()
+            pdf.add_page()
+            logo_path = os.path.join(DATA_DIR, 'logo.gif')
+            if os.path.exists(logo_path):
+                pdf.image(logo_path, x=92, y=10, w=25)
+            pdf.set_y(38)
+            pdf.set_font('Arial', 'B', 14)
+            pdf.cell(0, 8, safe_text('PARTE DE SALIDA'), 0, 1, 'C')
+            pdf.set_font('Arial', '', 12)
+            pdf.cell(0, 8, safe_text('I.E.S. Leopoldo Queipo'), 0, 1, 'C')
+            pdf.ln(5)
+            pdf.set_font("Arial", '', 11)
+            
+            def row(l, v):
+                pdf.set_font("Arial", 'B', 11); pdf.cell(90, 8, safe_text(l), 0, 0, 'R')
+                pdf.set_font("Arial", '', 11); pdf.cell(5); pdf.cell(0, 8, safe_text(v), 0, 1, 'L')
+                
+            row("Fecha:", date_str); row("Hora:", time_str)
+            pdf.ln(2); pdf.line(50, pdf.get_y(), 160, pdf.get_y()); pdf.ln(4)
+            pdf.set_font("Arial", 'B', 11); pdf.cell(0, 6, safe_text("Alumno:"), 0, 1, 'C')
+            pdf.set_font("Arial", '', 12); pdf.cell(0, 8, safe_text(data.get('studentName', '')), 0, 1, 'C')
+            row("Grupo:", data.get('group', '')); row("DNI:", data.get('dni', ''))
+            pdf.ln(4); pdf.line(50, pdf.get_y(), 160, pdf.get_y()); pdf.ln(4)
+            pdf.set_font("Arial", 'B', 11); pdf.cell(0, 6, safe_text("Motivo:"), 0, 1, 'C')
+            pdf.set_font("Arial", '', 11); pdf.cell(0, 8, safe_text(data.get('motive', '')), 0, 1, 'C')
+            if vuelve: pdf.ln(3); row("Regreso:", f"SÍ - Horas: {horas}")
+            pdf.set_y(-25); pdf.set_font('Arial', 'I', 9); pdf.cell(0, 10, safe_text('Documento oficial de control'), 0, 1, 'C')
+            pdf.output(pdf_path)
+        except Exception as e:
+            log_error(f"Error generating PDF at {pdf_path}: {e}")
+            return jsonify({"error": f"Error al generar el PDF: {str(e)}"}), 500
 
-    ticket_id = f"{now.strftime('%Y%m%d_%H%M%S')}_{safe_student_id}"
-    with open(CSV_FILE, 'a', newline='', encoding='utf-8') as f:
-        writer = csv.writer(f)
-        writer.writerow([date_str, time_str, data.get('studentId', ''), data.get('studentName', ''),
-                         data.get('group', ''), data.get('dni', ''), data.get('motive', ''),
-                         data.get('accompaniedBy', ''), data.get('tutorName', ''), pdf_filename,
-                         'Sí' if vuelve else 'No', horas, ticket_id, 'No'])
+        try:
+            ticket_id = f"{now.strftime('%Y%m%d_%H%M%S')}_{safe_student_id}"
+            with open(CSV_FILE, 'a', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                writer.writerow([date_str, time_str, data.get('studentId', ''), data.get('studentName', ''),
+                                 data.get('group', ''), data.get('dni', ''), data.get('motive', ''),
+                                 data.get('accompaniedBy', ''), data.get('tutorName', ''), pdf_filename,
+                                 'Sí' if vuelve else 'No', horas, ticket_id, 'No'])
+        except Exception as e:
+            log_error(f"Error writing to CSV {CSV_FILE}: {e}")
+            return jsonify({"error": f"Error al guardar en el historial: {str(e)}"}), 500
 
-    # Notifications logic...
-    guardian_emails = os.environ.get('GUARDIAN_EMAILS', '').split(',')
-    if guardian_emails:
-        body = f"Salida: {data.get('studentName')} ({data.get('group')})\nMotivo: {data.get('motive')}\n¿Regresa?: {'Sí' if vuelve else 'No'}"
-        for email in guardian_emails:
-            if email.strip(): send_email(email.strip(), "Aviso Guardia: Salida Alumno", body)
+        # Notifications logic...
+        try:
+            guardian_emails = os.environ.get('GUARDIAN_EMAILS', '').split(',')
+            if guardian_emails:
+                body = f"Salida: {data.get('studentName')} ({data.get('group')})\nMotivo: {data.get('motive')}\n¿Regresa?: {'Sí' if vuelve else 'No'}"
+                for email in guardian_emails:
+                    if email.strip(): send_email(email.strip(), "Aviso Guardia: Salida Alumno", body)
 
-    session_name, session_idx = get_current_session_info()
-    if session_name:
-        affected = SESSIONS_TIMES[session_idx:] if not vuelve else SESSIONS_TIMES[session_idx:session_idx + len(horas.split(','))]
-        notified = set()
-        for _, _, s in affected:
-            t = get_teacher_for_group(data.get('group', ''), s)
-            if t and t.get('email') and t['email'] not in notified:
-                send_email(t['email'], "Aviso Salida Alumno", f"El alumno {data.get('studentName')} ha salido.\nMotivo: {data.get('motive')}")
-                notified.add(t['email'])
+            session_name, session_idx = get_current_session_info()
+            if session_name:
+                affected = SESSIONS_TIMES[session_idx:] if not vuelve else SESSIONS_TIMES[session_idx:session_idx + len(horas.split(','))]
+                notified = set()
+                for _, _, s in affected:
+                    t = get_teacher_for_group(data.get('group', ''), s)
+                    if t and t.get('email') and t['email'] not in notified:
+                        send_email(t['email'], "Aviso Salida Alumno", f"El alumno {data.get('studentName')} ha salido.\nMotivo: {data.get('motive')}")
+                        notified.add(t['email'])
+        except Exception as e:
+            log_error(f"Error in notification logic: {e}")
+            # We don't return 500 here to let the operation succeed even if email fails
 
-    return jsonify({"status": "success", "pdf": pdf_filename})
+        return jsonify({"status": "success", "pdf": pdf_filename})
+        
+    except Exception as e:
+        log_error(f"General error in register_exit: {e}")
+        return jsonify({"error": f"Error interno: {str(e)}"}), 500
 
 @app.route('/api/upload-students', methods=['POST'])
 @admin_required
