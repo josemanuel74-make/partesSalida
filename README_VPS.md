@@ -55,7 +55,7 @@ User=guardias
 Group=www-data
 WorkingDirectory=/home/guardias/partesSalida
 Environment="PATH=/home/guardias/partesSalida/venv/bin"
-ExecStart=/home/guardias/partesSalida/venv/bin/gunicorn --workers 2 --bind 127.0.0.1:8081 server:app
+ExecStart=/home/guardias/partesSalida/venv/bin/gunicorn --workers 2 --bind 127.0.0.1:40050 server:app
 Restart=always
 
 [Install]

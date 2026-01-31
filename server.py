@@ -494,5 +494,5 @@ def add_security_headers(response):
 
 if __name__ == '__main__':
     # For local testing only. Production uses Gunicorn.
-    port = int(os.environ.get('PORT', 8081))
+    port = int(os.environ.get('PORT', 40050))
     app.run(host='127.0.0.1', port=port)
