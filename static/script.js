@@ -431,8 +431,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 handleSearch(searchInput.value);
 
             } else {
-                let errText = await res.text();
-                showToast('Error al guardar: ' + res.status, 'error');
+                const errorData = await res.json().catch(() => ({}));
+                const errorMsg = errorData.error || `Error del servidor (${res.status})`;
+                showToast('Error al guardar: ' + errorMsg, 'error');
             }
 
         } catch (e) {
