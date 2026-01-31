@@ -54,7 +54,7 @@ STORAGE_URI = os.environ.get('RATELIMIT_STORAGE_URL', 'memory://')
 limiter = Limiter(
     get_remote_address,
     app=app,
-    default_limits=["2000 per day", "500 per hour"] if DEBUG_MODE else ["200 per day", "50 per hour"],
+    default_limits=["2000 per day", "500 per hour"] if DEBUG_MODE else ["5000 per day", "2000 per hour"],
     storage_uri=STORAGE_URI,
     enabled=not DEBUG_MODE  # Disable limiter in local debug mode for easier testing
 )
@@ -506,7 +506,7 @@ def add_security_headers(response):
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['X-Frame-Options'] = 'DENY'
     response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
-    response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self' 'unsafe-inline' https://unpkg.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self';"
+    response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self' 'unsafe-inline' https://unpkg.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self';"
     return response
 
 if __name__ == '__main__':
