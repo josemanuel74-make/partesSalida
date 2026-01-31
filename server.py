@@ -43,7 +43,7 @@ app.config['DEBUG'] = DEBUG_MODE
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SECURE'] = os.environ.get('COOKIE_SECURE', '0') == '1'
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
-app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=8)
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=4)
 app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024  # 5MB Max Upload
 
 bcrypt = Bcrypt(app)
@@ -178,6 +178,12 @@ SESSIONS_TIMES = [
     ("18:45", "19:00", "Recreo 2"), ("19:00", "19:55", "Sesión 12"),
     ("19:55", "20:50", "Sesión 13"), ("20:50", "21:45", "Sesión 14"),
 ]
+
+# Mapping from UI names (1ª, 2ª...) to Timetable names (Sesión 1, Sesión 2...)
+SESSION_MAPPING = {
+    "1ª": "Sesión 1", "2ª": "Sesión 2", "3ª": "Sesión 3", "4ª": "Sesión 4",
+    "5ª": "Sesión 5", "6ª": "Sesión 6", "7ª": "Sesión 7", "8ª": "Sesión 8"
+}
 
 def get_current_session_info():
     time_str = datetime.now().strftime("%H:%M")
@@ -399,19 +405,49 @@ def register_exit():
         try:
             guardian_emails = os.environ.get('GUARDIAN_EMAILS', '').split(',')
             if guardian_emails:
-                body = f"Salida: {data.get('studentName')} ({data.get('group')})\nMotivo: {data.get('motive')}\n¿Regresa?: {'Sí' if vuelve else 'No'}"
+                body = f"Salida: {data.get('studentName')} ({data.get('group')})\nMotivo: {data.get('motive')}\n¿Regresa?: {'Sí (' + horas + ')' if vuelve else 'No'}"
                 for email in guardian_emails:
                     if email.strip(): send_email(email.strip(), "Aviso Guardia: Salida Alumno", body)
 
-            session_name, session_idx = get_current_session_info()
-            if session_name:
-                affected = SESSIONS_TIMES[session_idx:] if not vuelve else SESSIONS_TIMES[session_idx:session_idx + len(horas.split(','))]
-                notified = set()
-                for _, _, s in affected:
-                    t = get_teacher_for_group(data.get('group', ''), s)
-                    if t and t.get('email') and t['email'] not in notified:
-                        send_email(t['email'], "Aviso Salida Alumno", f"El alumno {data.get('studentName')} ha salido.\nMotivo: {data.get('motive')}")
-                        notified.add(t['email'])
+            # Identify which sessions to notify
+            sessions_to_notify = []
+            
+            # 1. Current session
+            current_sess_name, current_sess_idx = get_current_session_info()
+            if current_sess_name:
+                sessions_to_notify.append(current_sess_name)
+
+            # 2. Selected future sessions
+            if vuelve and horas:
+                # 'horas' comes as "1ª, 2ª"
+                for h in horas.split(','):
+                    mapped = SESSION_MAPPING.get(h.strip())
+                    if mapped and mapped not in sessions_to_notify:
+                        sessions_to_notify.append(mapped)
+            
+            # 3. Rest of the day if not returning
+            elif not vuelve and current_sess_idx != -1:
+                for _, _, s_name in SESSIONS_TIMES[current_sess_idx + 1:]:
+                    if "Sesión" in s_name and s_name not in sessions_to_notify:
+                        sessions_to_notify.append(s_name)
+
+            # Send emails to teachers
+            notified_emails = set()
+            student_group = data.get('group', '')
+            
+            for session_name in sessions_to_notify:
+                teacher = get_teacher_for_group(student_group, session_name)
+                if teacher and teacher.get('email'):
+                    t_email = teacher['email'].strip()
+                    if t_email and t_email not in notified_emails:
+                        msg_body = f"El alumno {data.get('studentName')} del grupo {student_group} ha salido del centro.\n"
+                        msg_body += f"Motivo: {data.get('motive')}\n"
+                        msg_body += f"Periodo afectado: {session_name}\n"
+                        msg_body += f"¿Regresa?: {'Sí' if vuelve else 'No'}"
+                        
+                        send_email(t_email, f"Aviso Salida Alumno: {session_name}", msg_body)
+                        notified_emails.add(t_email)
+                        
         except Exception as e:
             log_error(f"Error in notification logic: {e}")
             # We don't return 500 here to let the operation succeed even if email fails
