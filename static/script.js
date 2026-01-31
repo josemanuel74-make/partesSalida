@@ -433,7 +433,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 saveBtn.classList.add('hidden');
                 printBtn.classList.remove('hidden');
-                showToast('Salida registrada correctamente. Ya puedes imprimir el ticket.', 'success');
+
+                // Show notified teachers in toast
+                const dataRes = await res.json().catch(() => ({}));
+                const notified = dataRes.notified || [];
+                let successMsg = 'Salida registrada correctamente.';
+                if (notified.length > 0) {
+                    successMsg += '\nEmails enviados a: ' + notified.join(', ');
+                } else {
+                    successMsg += '\nAviso: No se encontraron profesores para notificar.';
+                }
+
+                showToast(successMsg, 'success');
 
                 // Refresh the list to update counters
                 handleSearch(searchInput.value);

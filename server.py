@@ -214,7 +214,10 @@ def send_email(to_email, subject, body):
     if not smtp_user or not smtp_pass: return False
     try:
         msg = MIMEMultipart()
-        msg['From'] = f"Partes de Salida <{os.environ.get('SENDER_EMAIL', smtp_user)}>"
+        display_name = "Control de Salidas (No responder)"
+        sender_email = os.environ.get('SENDER_EMAIL', smtp_user)
+        msg['From'] = f"{display_name} <{sender_email}>"
+        msg['Reply-To'] = "noreply@iesleopoldoqueipo.com"
         msg['To'] = to_email
         msg['Subject'] = subject
         msg.attach(MIMEText(body, 'plain', 'utf-8'))
@@ -433,26 +436,32 @@ def register_exit():
 
             # Send emails to teachers
             notified_emails = set()
+            notified_teacher_names = []
             student_group = data.get('group', '')
             
             for session_name in sessions_to_notify:
                 teacher = get_teacher_for_group(student_group, session_name)
                 if teacher and teacher.get('email'):
                     t_email = teacher['email'].strip()
+                    t_name = teacher.get('nombre', 'Profesor')
                     if t_email and t_email not in notified_emails:
                         msg_body = f"El alumno {data.get('studentName')} del grupo {student_group} ha salido del centro.\n"
                         msg_body += f"Motivo: {data.get('motive')}\n"
                         msg_body += f"Periodo afectado: {session_name}\n"
-                        msg_body += f"¿Regresa?: {'Sí' if vuelve else 'No'}"
+                        msg_body += f"¿Regresa?: {'Sí' if vuelve else 'No'}\n\n"
+                        msg_body += "--- Este es un mensaje automático, por favor no responda ---"
                         
-                        send_email(t_email, f"Aviso Salida Alumno: {session_name}", msg_body)
-                        notified_emails.add(t_email)
+                        if send_email(t_email, f"Aviso Salida Alumno: {session_name}", msg_body):
+                            notified_emails.add(t_email)
+                            if t_name not in notified_teacher_names:
+                                notified_teacher_names.append(t_name)
                         
         except Exception as e:
             log_error(f"Error in notification logic: {e}")
+            notified_teacher_names = []
             # We don't return 500 here to let the operation succeed even if email fails
 
-        return jsonify({"status": "success", "pdf": pdf_filename})
+        return jsonify({"status": "success", "pdf": pdf_filename, "notified": notified_teacher_names})
         
     except Exception as e:
         log_error(f"General error in register_exit: {e}")
