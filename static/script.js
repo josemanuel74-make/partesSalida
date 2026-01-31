@@ -19,6 +19,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const cancelBtn = document.getElementById('cancelBtn');
     const saveBtn = document.getElementById('saveBtn');
     const exitForm = document.getElementById('exitForm');
+    const logoutBtn = document.getElementById('logoutBtn');
 
     // New Form Elements
     const checkVuelve = document.getElementById('checkVuelve');
@@ -78,6 +79,7 @@ document.addEventListener('DOMContentLoaded', () => {
     closeModalBtn.addEventListener('click', closeModal);
     cancelBtn.addEventListener('click', closeModal);
     saveBtn.addEventListener('click', saveExit);
+    if (logoutBtn) logoutBtn.addEventListener('click', handleLogout);
 
     // Close modal on click outside
     modal.addEventListener('click', (e) => {
