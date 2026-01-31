@@ -407,8 +407,24 @@ def register_exit():
         # Notifications logic...
         try:
             guardian_emails = os.environ.get('GUARDIAN_EMAILS', '').split(',')
+            
+            # Email Templates
+            teacher_subject_tpl = os.environ.get('EMAIL_TEACHER_SUBJECT', "Aviso Salida Alumno: {periodo}")
+            teacher_body_tpl = os.environ.get('EMAIL_TEACHER_BODY', 
+                "El alumno {alumno} del grupo {grupo} ha salido del centro.\nMotivo: {motivo}\nPeriodo afectado: {periodo}\n¿Regresa?: {regreso}\n\n--- mensaje automático ---")
+            
+            guardian_body_tpl = os.environ.get('EMAIL_GUARDIAN_BODY',
+                "Salida: {alumno} ({grupo})\nMotivo: {motivo}\n¿Regresa?: {regreso}")
+
+            regreso_text = f"Sí ({horas})" if vuelve else "No"
+            
             if guardian_emails:
-                body = f"Salida: {data.get('studentName')} ({data.get('group')})\nMotivo: {data.get('motive')}\n¿Regresa?: {'Sí (' + horas + ')' if vuelve else 'No'}"
+                body = guardian_body_tpl.format(
+                    alumno=data.get('studentName'), 
+                    grupo=data.get('group'), 
+                    motivo=data.get('motive'), 
+                    regreso=regreso_text
+                )
                 for email in guardian_emails:
                     if email.strip(): send_email(email.strip(), "Aviso Guardia: Salida Alumno", body)
 
@@ -445,13 +461,16 @@ def register_exit():
                     t_email = teacher['email'].strip()
                     t_name = teacher.get('nombre', 'Profesor')
                     if t_email and t_email not in notified_emails:
-                        msg_body = f"El alumno {data.get('studentName')} del grupo {student_group} ha salido del centro.\n"
-                        msg_body += f"Motivo: {data.get('motive')}\n"
-                        msg_body += f"Periodo afectado: {session_name}\n"
-                        msg_body += f"¿Regresa?: {'Sí' if vuelve else 'No'}\n\n"
-                        msg_body += "--- Este es un mensaje automático, por favor no responda ---"
+                        msg_subject = teacher_subject_tpl.format(periodo=session_name)
+                        msg_body = teacher_body_tpl.format(
+                            alumno=data.get('studentName'),
+                            grupo=student_group,
+                            motivo=data.get('motive'),
+                            periodo=session_name,
+                            regreso=regreso_text
+                        )
                         
-                        if send_email(t_email, f"Aviso Salida Alumno: {session_name}", msg_body):
+                        if send_email(t_email, msg_subject, msg_body):
                             notified_emails.add(t_email)
                             if t_name not in notified_teacher_names:
                                 notified_teacher_names.append(t_name)
