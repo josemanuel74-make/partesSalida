@@ -56,8 +56,14 @@ document.addEventListener('DOMContentLoaded', () => {
         showToast('ADVERTENCIA CRÍTICA: Estás abriendo "index.html" directamente como archivo. Usa el servidor para que funcione.', 'error');
     }
 
-    // Event Listeners
-    searchInput.addEventListener('input', (e) => handleSearch(e.target.value));
+    // Event Listeners with Debounce
+    let searchTimeout;
+    searchInput.addEventListener('input', (e) => {
+        clearTimeout(searchTimeout);
+        searchTimeout = setTimeout(() => {
+            handleSearch(e.target.value);
+        }, 300);
+    });
 
     filterChips.forEach(chip => {
         chip.addEventListener('click', () => {
