@@ -44,7 +44,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Constants
-    const DATA_URL = 'data/students.json';
+    const DATA_URL = '/data/students.json';
     const API_URL = '/api/exit'; // Relative path to support any port
 
     // Initialize
@@ -189,9 +189,9 @@ document.addEventListener('DOMContentLoaded', () => {
         card.innerHTML = `
             <div class="card-header">
                 <div class="student-photo-container">
-                    <img src="${student.photo || 'data/logo.gif'}" 
+                    <img src="${(student.photo && student.photo.startsWith('http')) ? student.photo : (student.photo ? (student.photo.startsWith('/') ? student.photo : '/' + student.photo) : '/data/logo.gif')}" 
                          alt="${name}" 
-                         onerror="this.src='data/logo.gif'; this.classList.add('is-placeholder')"
+                         onerror="console.warn('Fallo al cargar foto de:', '${name}', 'Source:', this.src); this.src='/data/logo.gif'; this.classList.add('is-placeholder')"
                          class="student-photo ${!student.photo ? 'is-placeholder' : ''}">
                 </div>
                 <div class="student-info-header">
