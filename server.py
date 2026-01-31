@@ -413,6 +413,7 @@ def register_exit():
             teacher_body_tpl = os.environ.get('EMAIL_TEACHER_BODY', 
                 "El alumno {alumno} del grupo {grupo} ha salido del centro.\nMotivo: {motivo}\nPeriodo afectado: {periodo}\n¿Regresa?: {regreso}\n\n--- mensaje automático ---")
             
+            guardian_subject_tpl = os.environ.get('EMAIL_GUARDIAN_SUBJECT', "Aviso Guardia: Salida Alumno")
             guardian_body_tpl = os.environ.get('EMAIL_GUARDIAN_BODY',
                 "Salida: {alumno} ({grupo})\nMotivo: {motivo}\n¿Regresa?: {regreso}")
 
@@ -425,8 +426,14 @@ def register_exit():
                     motivo=data.get('motive'), 
                     regreso=regreso_text
                 )
+                subject = guardian_subject_tpl.format(
+                    alumno=data.get('studentName'),
+                    grupo=data.get('group'),
+                    motivo=data.get('motive'),
+                    regreso=regreso_text
+                )
                 for email in guardian_emails:
-                    if email.strip(): send_email(email.strip(), "Aviso Guardia: Salida Alumno", body)
+                    if email.strip(): send_email(email.strip(), subject, body)
 
             # Identify which sessions to notify
             sessions_to_notify = []
