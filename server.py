@@ -408,28 +408,30 @@ def register_exit():
         try:
             guardian_emails = os.environ.get('GUARDIAN_EMAILS', '').split(',')
             
-            # Email Templates
+            # Email Templates (Teacher templates are the master ones now)
             teacher_subject_tpl = os.environ.get('EMAIL_TEACHER_SUBJECT', "Aviso Salida Alumno: {periodo}")
             teacher_body_tpl = os.environ.get('EMAIL_TEACHER_BODY', 
                 "El alumno {alumno} del grupo {grupo} ha salido del centro.\nMotivo: {motivo}\nPeriodo afectado: {periodo}\n¿Regresa?: {regreso}\n\n--- mensaje automático ---")
             
-            guardian_subject_tpl = os.environ.get('EMAIL_GUARDIAN_SUBJECT', "Aviso Guardia: Salida Alumno")
-            guardian_body_tpl = os.environ.get('EMAIL_GUARDIAN_BODY',
-                "Salida: {alumno} ({grupo})\nMotivo: {motivo}\n¿Regresa?: {regreso}")
+            # Guardian templates fallback to teacher templates for consistency
+            guardian_subject_tpl = os.environ.get('EMAIL_GUARDIAN_SUBJECT', teacher_subject_tpl)
+            guardian_body_tpl = os.environ.get('EMAIL_GUARDIAN_BODY', teacher_body_tpl)
 
             regreso_text = f"Sí ({horas})" if vuelve else "No"
             
             if guardian_emails:
-                body = guardian_body_tpl.format(
-                    alumno=data.get('studentName'), 
-                    grupo=data.get('group'), 
-                    motivo=data.get('motive'), 
-                    regreso=regreso_text
-                )
                 subject = guardian_subject_tpl.format(
                     alumno=data.get('studentName'),
                     grupo=data.get('group'),
                     motivo=data.get('motive'),
+                    periodo="Varios (RESUMEN)",
+                    regreso=regreso_text
+                )
+                body = guardian_body_tpl.format(
+                    alumno=data.get('studentName'), 
+                    grupo=data.get('group'), 
+                    motivo=data.get('motive'), 
+                    periodo=horas if vuelve else "Resto del día",
                     regreso=regreso_text
                 )
                 for email in guardian_emails:
