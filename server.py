@@ -105,14 +105,19 @@ def init_db():
                         (email TEXT PRIMARY KEY, token TEXT, expires_at DATETIME)''')
 init_db()
 
-# Authorized Emails
-AUTHORIZED_EMAILS = [
+# Authorized Emails (can be overriden in .env)
+_default_emails = [
     "josemanuel.rodriguez@edumelilla.es",
     "carlos.moya@edumelilla.es",
     "eva.capilla@edumelilla.es",
     "gema.ridao@edumelilla.es",
     "rocio.dominguez@edumelilla.es"
 ]
+env_emails = os.environ.get('AUTHORIZED_EMAILS')
+if env_emails:
+    AUTHORIZED_EMAILS = [e.strip().lower() for e in env_emails.split(';') if e.strip()]
+else:
+    AUTHORIZED_EMAILS = _default_emails
 
 # --- UTILS ---
 def log_error(msg):
