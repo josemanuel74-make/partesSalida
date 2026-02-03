@@ -96,12 +96,23 @@ if not os.path.exists(CSV_FILE):
         writer = csv.writer(f)
         writer.writerow(CSV_HEADERS)
 
-# --- DB FOR PERSISTENT SESSIONS ---
+# --- DB FOR PERSISTENT SESSIONS & TOKENS ---
 def init_db():
     with sqlite3.connect(DB_FILE) as conn:
         conn.execute('''CREATE TABLE IF NOT EXISTS sessions 
                         (session_id TEXT PRIMARY KEY, user_id TEXT, expires_at DATETIME)''')
+        conn.execute('''CREATE TABLE IF NOT EXISTS login_tokens
+                        (email TEXT PRIMARY KEY, token TEXT, expires_at DATETIME)''')
 init_db()
+
+# Authorized Emails
+AUTHORIZED_EMAILS = [
+    "josemanuel.rodriguez@edumelilla.es",
+    "carlos.moya@edumelilla.es",
+    "eva.capilla@edumelilla.es",
+    "gema.ridao@edumelilla.es",
+    "rocio.dominguez@edumelilla.es"
+]
 
 # --- UTILS ---
 def log_error(msg):
@@ -246,22 +257,74 @@ def login_page():
 def get_csrf():
     return jsonify({'csrf_token': generate_csrf()})
 
+@app.route('/api/request-token', methods=['POST'])
+@limiter.limit("3 per 15 minutes")
+def request_token():
+    data = request.json
+    email = data.get('email', '').strip().lower()
+    
+    if email not in AUTHORIZED_EMAILS:
+        log_error(f"Unauthorized token request: {email}")
+        return jsonify({"error": "Correo electrónico no autorizado"}), 403
+    
+    token = ''.join([str(secrets.randbelow(10)) for _ in range(6)])
+    expires_at = datetime.now() + timedelta(minutes=10)
+    
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.execute("INSERT OR REPLACE INTO login_tokens (email, token, expires_at) VALUES (?, ?, ?)",
+                         (email, token, expires_at))
+        
+        subject = "Tu código de acceso - Control de Salidas"
+        body = f"Tu código de acceso es: {token}\n\nEste código caducará en 10 minutos."
+        
+        if send_email(email, subject, body):
+            return jsonify({"status": "success", "message": "Código enviado al correo"})
+        else:
+            return jsonify({"error": "Error al enviar el correo"}), 500
+            
+    except Exception as e:
+        log_error(f"Error requesting token: {e}")
+        return jsonify({"error": "Error interno del servidor"}), 500
+
 @app.route('/api/login', methods=['POST'])
 @limiter.limit("5 per 15 minutes")
 def login():
     data = request.json
-    password = data.get('password')
-    hashed_pw = os.environ.get('ADMIN_PASSWORD_HASH')
+    email = data.get('email', '').strip().lower()
+    token = data.get('token', '').strip()
     
-    if not hashed_pw:
-        return jsonify({"error": "Configuración de seguridad incompleta en el servidor"}), 500
-    
-    if bcrypt.check_password_hash(hashed_pw, password):
+    if not email or not token:
+        return jsonify({"error": "Email y token requeridos"}), 400
+        
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            cursor = conn.execute("SELECT token, expires_at FROM login_tokens WHERE email = ?", (email,))
+            row = cursor.fetchone()
+            
+            if not row:
+                return jsonify({"error": "No hay token para este email"}), 401
+                
+            stored_token, expires_at_str = row
+            expires_at = datetime.fromisoformat(expires_at_str)
+            
+            if datetime.now() > expires_at:
+                return jsonify({"error": "El código ha caducado"}), 401
+                
+            if stored_token != token:
+                return jsonify({"error": "Código incorrecto"}), 401
+                
+            # Valid token! Clear it and log in
+            conn.execute("DELETE FROM login_tokens WHERE email = ?", (email,))
+            
         session.permanent = True
         session['logged_in'] = True
+        session['user_email'] = email
         return jsonify({"status": "success"})
-    
-    return jsonify({"error": "Contraseña incorrecta"}), 401
+        
+    except Exception as e:
+        log_error(f"Login error: {e}")
+        return jsonify({"error": "Error interno del servidor"}), 500
 
 @app.route('/api/logout', methods=['POST'])
 def logout():

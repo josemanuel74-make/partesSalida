@@ -607,10 +607,21 @@ body {
 }
 
 @media print {
+    @page {
+        margin: 0;
+        size: auto;
+    }
 
     /* Hide everything */
     body * {
         visibility: hidden;
+    }
+
+    html, body {
+        height: auto !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        background: white !important;
     }
 
     .app-container,
@@ -632,7 +643,8 @@ body {
         top: 0;
         width: 80mm;
         /* Standard thermal width */
-        padding: 5px;
+        padding: 5mm;
+        margin: 0;
         font-family: 'Courier New', Courier, monospace;
         /* Typical receipt font */
         color: black;
@@ -641,11 +653,11 @@ body {
 
     .ticket-header {
         text-align: center;
-        margin-bottom: 20px;
+        margin-bottom: 10px;
     }
 
     .ticket-logo {
-        max-width: 150px;
+        max-width: 120px;
         filter: grayscale(100%);
         margin-bottom: 5px;
     }
