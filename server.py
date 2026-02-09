@@ -592,15 +592,73 @@ def upload_students():
         df = pd.read_excel(temp_path, header=4)
         df.columns = [str(c).strip() for c in df.columns]
         new_students = []
+
+        # Phone column mapping based on typical Excel headers
+        phone_cols = [
+            ('Teléfono principal', 'Principal'),
+            ('Teléfono Alumno', 'Alumno'),
+            ('Teléfono Urgencia', 'Urgencia'),
+            ('Teléfono Primer tutor', 'Tutor 1'),
+            ('Teléfono Segundo tutor', 'Tutor 2')
+        ]
+        
+        # Helper to clean phone numbers
+        def clean_phone(val):
+            if pd.isna(val): return None
+            # Convert to string and strip .0 if it's a float-like string
+            s = str(val).strip()
+            if s.endswith('.0'): s = s[:-2]
+            # Remove any remaining non-digit characters just in case
+            s = ''.join(filter(str.isdigit, s))
+            return s if s and len(s) >= 9 else None
+
+        # Create a mapping of lowercase column names to actual names for case-insensitive lookup
+        col_map = {str(c).strip().lower(): str(c).strip() for c in df.columns}
+
         for _, row in df.iterrows():
-            s_name = str(row.get('Alumno/a', '')).strip()
+            s_name = str(row.get('Alumno/a', row.get('Nombre', ''))).strip()
             if not s_name or s_name == 'nan': continue
+            
+            student_id = str(row.get('Nº Id. Escolar', '')).strip()
+            if student_id == 'nan': continue
+            
+            # Process phones
+            phones = []
+            # Specific columns mapping
+            for col_name, label in phone_cols:
+                # Case-insensitive lookup
+                actual_col = col_map.get(col_name.lower())
+                if actual_col:
+                    raw_val = row.get(actual_col)
+                    cleaned = clean_phone(raw_val)
+                    if cleaned:
+                        phones.append({"label": label, "number": cleaned, "urgent": 'Urgencia' in label})
+            
+            # Fallback/Additional from other columns containing "Teléfon" or "Móvil"
+            # (Only if not already captured - simplifying for now to just the explicit mapping plus a generic scan if empty?)
+            # Let's stick to the explicit mapping + 'Teléfono móvil' etc if they exist in your Excel.
+            # You mentioned "Principal", which might be "Teléfono Alumno" or similar.
+            
+            # Image logic
+            # We assume photos are stored as <id>.jpg in data/photos/
+            # Check if file exists
+            photo_path = None
+            possible_exts = ['.jpg', '.jpeg', '.png']
+            for ext in possible_exts:
+                local_path = os.path.join(DATA_DIR, "photos", f"{student_id}{ext}")
+                if os.path.exists(local_path):
+                    photo_path = f"/data/photos/{student_id}{ext}"
+                    break
+            
             new_students.append({
-                "id": str(row.get('Nº Id. Escolar', '')).strip(),
+                "id": student_id,
                 "name": s_name,
                 "group": str(row.get('Unidad', '')).strip(),
                 "dni": str(row.get('DNI/Pasaporte', '')).strip(),
-                "tutor1": { "name": f"{row.get('Nombre Primer tutor', '')} {row.get('Primer apellido Primer tutor', '')}".strip() }
+                "tutor1": { "name": f"{row.get('Nombre Primer tutor', '')} {row.get('Primer apellido Primer tutor', '')}".strip() },
+                "tutor2": { "name": f"{row.get('Nombre Segundo tutor', '')} {row.get('Primer apellido Segundo tutor', '')}".strip() },
+                "phones": phones,
+                "photo": photo_path
             })
         
         students_file = os.path.join(DATA_DIR, "students.json")
