@@ -593,11 +593,11 @@ def upload_students():
         df.columns = [str(c).strip() for c in df.columns]
         new_students = []
 
-        # Phone column mapping based on typical Excel headers
+        # Phone column mapping based on the exact headers provided by the user
         phone_cols = [
-            ('Teléfono principal', 'Principal'),
-            ('Teléfono Alumno', 'Alumno'),
-            ('Teléfono Urgencia', 'Urgencia'),
+            ('Teléfono', 'Principal'),
+            ('Teléfono personal alumno/a', 'Alumno'),
+            ('Teléfono de urgencia', 'Urgencia'),
             ('Teléfono Primer tutor', 'Tutor 1'),
             ('Teléfono Segundo tutor', 'Tutor 2')
         ]
@@ -616,14 +616,15 @@ def upload_students():
         col_map = {str(c).strip().lower(): str(c).strip() for c in df.columns}
 
         for _, row in df.iterrows():
-            s_name = str(row.get('Alumno/a', row.get('Nombre', ''))).strip()
+            # Use 'Alumno/a' or fallback to 'Nombre'
+            s_name = str(row.get(col_map.get('alumno/a'), row.get(col_map.get('nombre'), ''))).strip()
             if not s_name or s_name == 'nan': continue
             
-            student_id = str(row.get('Nº Id. Escolar', '')).strip()
+            student_id = str(row.get(col_map.get('nº id. escolar'), '')).strip()
             if student_id == 'nan': continue
             
-            # Additional fields to match students.json
-            course = str(row.get('Enseñanza/Curso', row.get('Curso', ''))).strip()
+            # Additional fields to match students.json with exact user headers
+            course = str(row.get(col_map.get('curso'), '')).strip()
             email = f"{student_id}@estudiantes.edumelilla.es"
             
             # Process phones
@@ -648,18 +649,18 @@ def upload_students():
             new_students.append({
                 "id": student_id,
                 "name": s_name,
-                "group": str(row.get('Unidad', '')).strip(),
-                "dni": str(row.get('DNI/Pasaporte', '')).strip(),
+                "group": str(row.get(col_map.get('unidad'), '')).strip(),
+                "dni": str(row.get(col_map.get('dni/pasaporte'), '')).strip(),
                 "course": course if course != 'nan' else "",
                 "email": email,
                 "photo": photo_path,
                 "tutor1": { 
-                    "name": f"{row.get('Nombre Primer tutor', '')} {row.get('Primer apellido Primer tutor', '')}".strip() if row.get('Nombre Primer tutor') else "",
-                    "dni": str(row.get('DNI Primer tutor', '')).strip() if row.get('DNI Primer tutor') else ""
+                    "name": f"{row.get(col_map.get('nombre primer tutor'), '')} {row.get(col_map.get('primer apellido primer tutor'), '')}".strip(),
+                    "dni": str(row.get(col_map.get('dni/pasaporte primer tutor'), '')).strip()
                 },
                 "tutor2": { 
-                    "name": f"{row.get('Nombre Segundo tutor', '')} {row.get('Primer apellido Segundo tutor', '')}".strip() if row.get('Nombre Segundo tutor') else "",
-                    "dni": str(row.get('DNI Segundo tutor', '')).strip() if row.get('DNI Segundo tutor') else ""
+                    "name": f"{row.get(col_map.get('nombre segundo tutor'), '')} {row.get(col_map.get('primer apellido segundo tutor'), '')}".strip(),
+                    "dni": str(row.get(col_map.get('dni/pasaporte segundo tutor'), row.get(col_map.get('teléfono segundo tutor'), ''))).strip()
                 },
                 "phones": phones
             })
