@@ -615,16 +615,22 @@ def upload_students():
         # Create a mapping of lowercase column names to actual names for case-insensitive lookup
         col_map = {str(c).strip().lower(): str(c).strip() for c in df.columns}
 
+        # Helper to clean strings and remove 'nan'
+        def clean_val(val):
+            if pd.isna(val): return ""
+            s = str(val).strip()
+            return "" if s.lower() == 'nan' else s
+
         for _, row in df.iterrows():
             # Use 'Alumno/a' or fallback to 'Nombre'
-            s_name = str(row.get(col_map.get('alumno/a'), row.get(col_map.get('nombre'), ''))).strip()
-            if not s_name or s_name == 'nan': continue
+            s_name = clean_val(row.get(col_map.get('alumno/a'), row.get(col_map.get('nombre'))))
+            if not s_name: continue
             
-            student_id = str(row.get(col_map.get('nº id. escolar'), '')).strip()
-            if student_id == 'nan': continue
+            student_id = clean_val(row.get(col_map.get('nº id. escolar')))
+            if not student_id: continue
             
             # Additional fields to match students.json with exact user headers
-            course = str(row.get(col_map.get('curso'), '')).strip()
+            course = clean_val(row.get(col_map.get('curso')))
             email = f"{student_id}@estudiantes.edumelilla.es"
             
             # Process phones
@@ -646,21 +652,28 @@ def upload_students():
                     photo_path = f"data/photos/{student_id}{ext}"
                     break
             
+            # Tutor Name Joining Logic
+            def get_full_tutor_name(prefix):
+                n = clean_val(row.get(col_map.get(f'nombre {prefix} tutor')))
+                a1 = clean_val(row.get(col_map.get(f'primer apellido {prefix} tutor')))
+                a2 = clean_val(row.get(col_map.get(f'segundo apellido {prefix} tutor')))
+                return " ".join(filter(None, [n, a1, a2]))
+
             new_students.append({
                 "id": student_id,
                 "name": s_name,
-                "group": str(row.get(col_map.get('unidad'), '')).strip(),
-                "dni": str(row.get(col_map.get('dni/pasaporte'), '')).strip(),
-                "course": course if course != 'nan' else "",
+                "group": clean_val(row.get(col_map.get('unidad'))),
+                "dni": clean_val(row.get(col_map.get('dni/pasaporte'))),
+                "course": course,
                 "email": email,
                 "photo": photo_path,
                 "tutor1": { 
-                    "name": f"{row.get(col_map.get('nombre primer tutor'), '')} {row.get(col_map.get('primer apellido primer tutor'), '')}".strip(),
-                    "dni": str(row.get(col_map.get('dni/pasaporte primer tutor'), '')).strip()
+                    "name": get_full_tutor_name('primer'),
+                    "dni": clean_val(row.get(col_map.get('dni/pasaporte primer tutor')))
                 },
                 "tutor2": { 
-                    "name": f"{row.get(col_map.get('nombre segundo tutor'), '')} {row.get(col_map.get('primer apellido segundo tutor'), '')}".strip(),
-                    "dni": str(row.get(col_map.get('dni/pasaporte segundo tutor'), row.get(col_map.get('teléfono segundo tutor'), ''))).strip()
+                    "name": get_full_tutor_name('segundo'),
+                    "dni": clean_val(row.get(col_map.get('dni/pasaporte segundo tutor'), row.get(col_map.get('teléfono segundo tutor'))))
                 },
                 "phones": phones
             })
