@@ -349,8 +349,12 @@ body {
     backdrop-filter: blur(5px);
     z-index: 1000;
     display: flex;
-    align-items: center;
+    align-items: flex-start;
+    /* Change from center to allow scrolling from top */
     justify-content: center;
+    padding: 2rem 1rem;
+    overflow-y: auto;
+    /* Enable scroll on the overlay itself */
     opacity: 1;
     transition: opacity 0.3s ease;
 }
@@ -368,6 +372,9 @@ body {
     max-width: 500px;
     padding: 2rem;
     box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+    margin: auto;
+    /* Keep it centered when content is small */
+    position: relative;
     transform: translateY(0);
     transition: transform 0.3s ease;
 }
@@ -617,7 +624,8 @@ body {
         visibility: hidden;
     }
 
-    html, body {
+    html,
+    body {
         height: auto !important;
         margin: 0 !important;
         padding: 0 !important;
@@ -777,8 +785,10 @@ body {
 }
 
 .history-body {
-    max-height: 70vh;
+    max-height: 60vh;
+    /* Reduced slightly to ensure overall modal fits better */
     overflow-y: auto;
+    border-bottom: 1px solid var(--border);
 }
 
 .history-table {
