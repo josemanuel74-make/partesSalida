@@ -502,6 +502,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Upload Logic
     const uploadBtn = document.getElementById('uploadBtn');
     const studentExcelInput = document.getElementById('studentExcelInput');
+    if (studentExcelInput) studentExcelInput.accept = ".xlsx, .xls";
 
     if (uploadBtn) {
         uploadBtn.addEventListener('click', () => {

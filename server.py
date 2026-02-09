@@ -574,8 +574,8 @@ def upload_students():
         return jsonify({"error": "Nombre de archivo vacío"}), 400
     
     # Validate extension
-    if not file.filename.lower().endswith('.xlsx'):
-        return jsonify({"error": "Solo se permiten archivos .xlsx"}), 400
+    if not file.filename.lower().endswith(('.xlsx', '.xls')):
+        return jsonify({"error": "Solo se permiten archivos .xlsx o .xls"}), 400
 
     # Secure temp storage
     temp_dir = tempfile.mkdtemp()
