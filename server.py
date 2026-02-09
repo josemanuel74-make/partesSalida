@@ -622,11 +622,13 @@ def upload_students():
             student_id = str(row.get('Nº Id. Escolar', '')).strip()
             if student_id == 'nan': continue
             
+            # Additional fields to match students.json
+            course = str(row.get('Enseñanza/Curso', row.get('Curso', ''))).strip()
+            email = f"{student_id}@estudiantes.edumelilla.es"
+            
             # Process phones
             phones = []
-            # Specific columns mapping
             for col_name, label in phone_cols:
-                # Case-insensitive lookup
                 actual_col = col_map.get(col_name.lower())
                 if actual_col:
                     raw_val = row.get(actual_col)
@@ -634,20 +636,13 @@ def upload_students():
                     if cleaned:
                         phones.append({"label": label, "number": cleaned, "urgent": 'Urgencia' in label})
             
-            # Fallback/Additional from other columns containing "Teléfon" or "Móvil"
-            # (Only if not already captured - simplifying for now to just the explicit mapping plus a generic scan if empty?)
-            # Let's stick to the explicit mapping + 'Teléfono móvil' etc if they exist in your Excel.
-            # You mentioned "Principal", which might be "Teléfono Alumno" or similar.
-            
-            # Image logic
-            # We assume photos are stored as <id>.jpg in data/photos/
-            # Check if file exists
+            # Photo logic
             photo_path = None
             possible_exts = ['.jpg', '.jpeg', '.png']
             for ext in possible_exts:
                 local_path = os.path.join(DATA_DIR, "photos", f"{student_id}{ext}")
                 if os.path.exists(local_path):
-                    photo_path = f"/data/photos/{student_id}{ext}"
+                    photo_path = f"data/photos/{student_id}{ext}"
                     break
             
             new_students.append({
@@ -655,10 +650,18 @@ def upload_students():
                 "name": s_name,
                 "group": str(row.get('Unidad', '')).strip(),
                 "dni": str(row.get('DNI/Pasaporte', '')).strip(),
-                "tutor1": { "name": f"{row.get('Nombre Primer tutor', '')} {row.get('Primer apellido Primer tutor', '')}".strip() },
-                "tutor2": { "name": f"{row.get('Nombre Segundo tutor', '')} {row.get('Primer apellido Segundo tutor', '')}".strip() },
-                "phones": phones,
-                "photo": photo_path
+                "course": course if course != 'nan' else "",
+                "email": email,
+                "photo": photo_path,
+                "tutor1": { 
+                    "name": f"{row.get('Nombre Primer tutor', '')} {row.get('Primer apellido Primer tutor', '')}".strip() if row.get('Nombre Primer tutor') else "",
+                    "dni": str(row.get('DNI Primer tutor', '')).strip() if row.get('DNI Primer tutor') else ""
+                },
+                "tutor2": { 
+                    "name": f"{row.get('Nombre Segundo tutor', '')} {row.get('Primer apellido Segundo tutor', '')}".strip() if row.get('Nombre Segundo tutor') else "",
+                    "dni": str(row.get('DNI Segundo tutor', '')).strip() if row.get('DNI Segundo tutor') else ""
+                },
+                "phones": phones
             })
         
         students_file = os.path.join(DATA_DIR, "students.json")
