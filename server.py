@@ -87,7 +87,7 @@ LOG_FILE = os.path.join(DATA_DIR, "server_error.log")
 DB_FILE = os.path.join(DATA_DIR, "sessions.db")
 
 CSV_HEADERS = ["Fecha", "Hora", "ID Alumno", "Nombre", "Grupo", 
-               "DNI Alumno", "Motivo", "Acompañante", "Detalle Acompañante", 
+               "DNI Alumno", "Motivo", "Observaciones", "Acompañante", "Detalle Acompañante", 
                "PDF", "Vuelve", "Horas", "TicketID", "HaVuelto"]
 
 # Ensure CSV exists
@@ -420,6 +420,7 @@ def register_exit():
         time_str = now.strftime("%H:%M:%S")
         vuelve = data.get('vuelve', False)
         horas = data.get('horas', '') if vuelve else ''
+        observaciones = data.get('observaciones', '')
         
         # Sanitize ID for filename
         safe_student_id = secure_filename(str(data.get('studentId', 'unknown')))
@@ -453,6 +454,10 @@ def register_exit():
             pdf.ln(4); pdf.line(50, pdf.get_y(), 160, pdf.get_y()); pdf.ln(4)
             pdf.set_font("Arial", 'B', 11); pdf.cell(0, 6, safe_text("Motivo:"), 0, 1, 'C')
             pdf.set_font("Arial", '', 11); pdf.cell(0, 8, safe_text(data.get('motive', '')), 0, 1, 'C')
+            if observaciones:
+                pdf.ln(2)
+                pdf.set_font("Arial", 'B', 11); pdf.cell(0, 6, safe_text("Observaciones:"), 0, 1, 'C')
+                pdf.set_font("Arial", '', 10); pdf.multi_cell(0, 6, safe_text(observaciones), 0, 'C')
             if vuelve: pdf.ln(3); row("Regreso:", f"SÍ - Horas: {horas}")
             pdf.set_y(-25); pdf.set_font('Arial', 'I', 9); pdf.cell(0, 10, safe_text('Documento oficial de control'), 0, 1, 'C')
             pdf.output(pdf_path)
@@ -466,8 +471,8 @@ def register_exit():
                 writer = csv.writer(f)
                 writer.writerow([date_str, time_str, data.get('studentId', ''), data.get('studentName', ''),
                                  data.get('group', ''), data.get('dni', ''), data.get('motive', ''),
-                                 data.get('accompaniedBy', ''), data.get('tutorName', ''), pdf_filename,
-                                 'Sí' if vuelve else 'No', horas, ticket_id, 'No'])
+                                 observaciones, data.get('accompaniedBy', ''), data.get('tutorName', ''), 
+                                 pdf_filename, 'Sí' if vuelve else 'No', horas, ticket_id, 'No'])
         except Exception as e:
             log_error(f"Error writing to CSV {CSV_FILE}: {e}")
             return jsonify({"error": f"Error al guardar en el historial: {str(e)}"}), 500

@@ -152,6 +152,12 @@
                             </div>
                         </div>
                     </div>
+
+                    <div class="form-group">
+                        <label for="observaciones">Observaciones</label>
+                        <textarea id="observaciones" class="form-select" rows="3" placeholder="Detalles adicionales..."
+                            style="resize: vertical; min-height: 80px;"></textarea>
+                    </div>
                 </form>
             </div>
             <div class="modal-footer">
@@ -254,6 +260,7 @@
                             <th>Alumno</th>
                             <th>Grupo</th>
                             <th>Motivo</th>
+                            <th>Obs.</th>
                             <th>Acompañante</th>
                             <th>Vuelve</th>
                             <th>PDF</th>
@@ -300,9 +307,13 @@
                 <strong>Motivo:</strong> <br>
                 <span id="ticketMotive"></span>
             </div>
+            <div class="ticket-row" id="ticketObsRow" style="display: none;">
+                <strong>Observaciones:</strong> <br>
+                <span id="ticketObservations"></span>
+            </div>
             <div class="ticket-row">
                 <strong>Acompañado por:</strong> <br>
-            <span id="ticketAccompanied"></span>
+                <span id="ticketAccompanied"></span>
             </div>
         </div>
         <div class="ticket-footer">

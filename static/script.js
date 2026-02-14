@@ -340,6 +340,7 @@ document.addEventListener('DOMContentLoaded', () => {
         document.querySelector('input[name="accompaniedBy"][value="Solo"]').checked = true;
         checkVuelve.checked = false;
         hoursContainer.classList.add('hidden');
+        document.getElementById('observaciones').value = '';
         document.querySelectorAll('input[name="period"]').forEach(cb => cb.checked = false);
 
         saveBtn.classList.remove('hidden');
@@ -385,6 +386,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 group: selectedStudent.group,
                 dni: selectedStudent.dni,
                 motive: motive,
+                observaciones: document.getElementById('observaciones').value.trim(),
                 accompaniedBy: accompaniedVal,
                 tutorName: tutorName,
                 vuelve: vuelve,
@@ -412,6 +414,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 document.getElementById('ticketGroup').textContent = selectedStudent.group;
                 document.getElementById('ticketDNI').textContent = selectedStudent.dni;
                 document.getElementById('ticketMotive').textContent = motive;
+                const obs = document.getElementById('observaciones').value.trim();
+                const ticketObsRow = document.getElementById('ticketObsRow');
+                if (obs) {
+                    document.getElementById('ticketObservations').textContent = obs;
+                    ticketObsRow.style.display = 'block';
+                } else {
+                    ticketObsRow.style.display = 'none';
+                }
 
                 let accompDisplay = accompaniedVal;
                 if (accompaniedVal === 'Tutor1' || accompaniedVal === 'Tutor2') accompDisplay = tutorName;
@@ -594,6 +604,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <td>${row['Nombre'] || '-'}</td>
                 <td><span class="group-badge small">${row['Grupo'] || '-'}</span></td>
                 <td>${row['Motivo'] || '-'}</td>
+                <td title="${row['Observaciones'] || ''}" style="max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${row['Observaciones'] || '-'}</td>
                 <td>${row['Detalle Acompañante'] || row['Acompañante'] || '-'}</td>
                 <td>${vuelve === 'Sí' ? `<span style="color:#d8b4fe">Sí (${horas})</span>` : 'No'}</td>
                 <td>
@@ -625,8 +636,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const to = dateTo.value;
 
         const filtered = allHistoryRecords.filter(row => {
-            // Search term (DNI, Name, Group)
-            const searchable = `${row['Nombre']} ${row['Grupo']} ${row['DNI Alumno']} ${row['ID Alumno']}`.toLowerCase();
+            // Search term (DNI, Name, Group, Observations)
+            const searchable = `${row['Nombre']} ${row['Grupo']} ${row['DNI Alumno']} ${row['ID Alumno']} ${row['Observaciones'] || ''}`.toLowerCase();
             const matchesTerm = !term || searchable.includes(term);
 
             // Motive
